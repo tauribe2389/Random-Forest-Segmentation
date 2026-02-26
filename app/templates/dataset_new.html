@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Register Dataset{% endblock %}
+{% block content %}
+<section class="panel narrow">
+  <h2>Register Dataset</h2>
+  <p>Point to a local folder containing COCO annotations and images.</p>
+
+  <form method="post" class="grid-form">
+    <label>
+      Dataset Name
+      <input type="text" name="name" required placeholder="my-coco-dataset">
+    </label>
+
+    <label>
+      Dataset Folder Path
+      <input type="text" name="dataset_path" required placeholder="C:\data\dataset_01">
+    </label>
+
+    <label>
+      Image Root (relative to dataset folder)
+      <input type="text" name="image_root" value="images" placeholder="images">
+    </label>
+
+    <label>
+      COCO JSON Path (absolute or relative to dataset folder)
+      <input type="text" name="coco_json_path" value="annotations.json" placeholder="annotations.json">
+    </label>
+
+    <div class="form-actions">
+      <button type="submit">Register Dataset</button>
+    </div>
+  </form>
+</section>
+{% endblock %}
+

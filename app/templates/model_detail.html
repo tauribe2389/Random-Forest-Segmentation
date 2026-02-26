@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Model {{ model.id }} Details{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Model Details</h2>
+  <table>
+    <tbody>
+      <tr><th>ID</th><td>{{ model.id }}</td></tr>
+      <tr><th>Name</th><td>{{ model.name }}</td></tr>
+      <tr><th>Status</th><td>{{ model.status }}</td></tr>
+      <tr><th>Created</th><td>{{ model.created_at }}</td></tr>
+      <tr><th>Dataset</th><td>{{ model.dataset_name }} (id={{ model.dataset_id }})</td></tr>
+      <tr><th>Dataset Path</th><td><code>{{ model.dataset_path }}</code></td></tr>
+      <tr><th>Image Root</th><td><code>{{ model.dataset_image_root }}</code></td></tr>
+      <tr><th>COCO JSON</th><td><code>{{ model.dataset_coco_json_path }}</code></td></tr>
+      <tr><th>COCO Checksum</th><td><code>{{ model.dataset_coco_checksum }}</code></td></tr>
+      <tr><th>Artifact Dir</th><td><code>{{ model.artifact_dir }}</code></td></tr>
+      <tr><th>Model File</th><td><code>{{ model.model_path }}</code></td></tr>
+      <tr><th>Metadata File</th><td><code>{{ model.metadata_path }}</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Classes</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Class Index</th>
+        <th>Category ID</th>
+        <th>Name</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in model.classes_json %}
+        <tr>
+          <td>{{ item.class_index }}</td>
+          <td>{{ item.category_id }}</td>
+          <td>{{ item.name }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Feature Config</h2>
+  <pre>{{ model.feature_config_json | prettyjson }}</pre>
+</section>
+
+<section class="panel">
+  <h2>Hyperparameters</h2>
+  <pre>{{ model.hyperparams_json | prettyjson }}</pre>
+</section>
+
+<section class="panel">
+  <h2>Metrics Summary</h2>
+  <pre>{{ model.metrics_json | prettyjson }}</pre>
+</section>
+
+<p>
+  <a href="{{ url_for('main.new_analysis', model_id=model.id) }}">Run analysis with this model</a>
+  |
+  <a href="{{ url_for('main.dashboard') }}">Back to dashboard</a>
+</p>
+{% endblock %}
+

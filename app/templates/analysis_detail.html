@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Analysis Run {{ run.id }}{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Analysis Run #{{ run.id }}</h2>
+  <table>
+    <tbody>
+      <tr><th>Created</th><td>{{ run.created_at }}</td></tr>
+      <tr><th>Status</th><td>{{ run.status }}</td></tr>
+      <tr><th>Model</th><td>{{ run.model_name }} (id={{ run.model_id }})</td></tr>
+      <tr><th>Images requested</th><td>{{ run.num_images }}</td></tr>
+      <tr><th>Output dir</th><td><code>{{ run.output_dir }}</code></td></tr>
+      {% if run.error_message %}
+        <tr><th>Error</th><td><pre>{{ run.error_message }}</pre></td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Run Summary</h2>
+  <pre>{{ run.summary_json | prettyjson }}</pre>
+</section>
+
+<section class="panel">
+  <h2>Per-Image Results</h2>
+  {% if items %}
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Input Image</th>
+          <th>Overlay Preview</th>
+          <th>Files</th>
+          <th>Summary</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td><code>{{ item.input_image }}</code></td>
+            <td>
+              {% set overlay_link = file_url(item.overlay_path) %}
+              {% if overlay_link %}
+                <a href="{{ overlay_link }}" target="_blank">
+                  <img src="{{ overlay_link }}" alt="overlay {{ loop.index }}" class="thumb">
+                </a>
+              {% else %}
+                N/A
+              {% endif %}
+            </td>
+            <td>
+              {% set mask_link = file_url(item.mask_path) %}
+              {% if overlay_link %}
+                <a href="{{ overlay_link }}" target="_blank">Overlay</a>
+              {% endif %}
+              {% if mask_link %}
+                {% if overlay_link %}|{% endif %}
+                <a href="{{ mask_link }}" target="_blank">Mask</a>
+              {% endif %}
+            </td>
+            <td><pre>{{ item.summary_json | prettyjson }}</pre></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No per-image outputs saved.</p>
+  {% endif %}
+</section>
+
+<p>
+  <a href="{{ url_for('main.new_analysis', model_id=run.model_id) }}">Run another analysis</a>
+  |
+  <a href="{{ url_for('main.dashboard') }}">Back to dashboard</a>
+</p>
+{% endblock %}
+

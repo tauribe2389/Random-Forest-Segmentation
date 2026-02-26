@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}New Analysis Run{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>New Analysis Run</h2>
+  {% if not models %}
+    <p>No trained models available yet.</p>
+    <p><a href="{{ url_for('main.dashboard') }}">Train a model first</a>.</p>
+  {% else %}
+    <form method="post" class="grid-form">
+      <label>
+        Model
+        <select name="model_id" required>
+          {% for model in models %}
+            <option value="{{ model.id }}" {% if selected_model_id == model.id %}selected{% endif %}>
+              {{ model.name }} (id={{ model.id }}, dataset={{ model.dataset_name }})
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <h3>Input Image Paths</h3>
+      <label>
+        Explicit image paths (one per line)
+        <textarea name="image_paths" rows="8" placeholder="C:\data\photos\img1.png&#10;C:\data\photos\img2.jpg"></textarea>
+      </label>
+
+      <h3>Or Select Folder + Glob</h3>
+      <label>
+        Image folder path
+        <input type="text" name="image_folder" placeholder="C:\data\photos">
+      </label>
+      <label>
+        Glob pattern
+        <input type="text" name="glob_pattern" value="*.png" placeholder="*.jpg">
+      </label>
+
+      <div class="form-actions">
+        <button type="submit">Run Analysis</button>
+      </div>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}
+

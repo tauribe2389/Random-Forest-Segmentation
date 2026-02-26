@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Training Status{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Training Status</h2>
+
+  {% if success %}
+    <p class="status-ok">Model training completed.</p>
+  {% else %}
+    <p class="status-error">Model training failed.</p>
+    {% if error %}
+      <pre>{{ error }}</pre>
+    {% endif %}
+  {% endif %}
+
+  {% if logs %}
+    <h3>Progress Log</h3>
+    <ul class="log-list">
+      {% for log in logs %}
+        <li>{{ log }}</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% if warnings %}
+    <h3>Warnings</h3>
+    <ul class="log-list">
+      {% for warning in warnings %}
+        <li>{{ warning }}</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  <p>
+    <a href="{{ url_for('main.dashboard') }}">Back to dashboard</a>
+    {% if model_id %}
+      | <a href="{{ url_for('main.model_details', model_id=model_id) }}">Open model details</a>
+    {% endif %}
+  </p>
+</section>
+{% endblock %}
+
