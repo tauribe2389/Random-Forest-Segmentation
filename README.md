@@ -1,136 +1,70 @@
-# Local Random-Forest Image Segmentation App (Flask + Jinja2)
+﻿# Model Foundry (Local-Only)
 
-This project is a local-only web app for:
+Model Foundry is a local-first Flask app that combines:
 
-- Registering COCO datasets from local folders
-- Training Random-Forest segmentation models
-- Running inference/analysis on selected images
-- Tracking model registry and analysis run history in SQLite
+- Superpixel image annotation + COCO export
+- Random-forest segmentation training
+- Batch analysis/inference runs
+- Local model/run registry in SQLite
 
-No external APIs, no telemetry, no cloud services.
+## Key Updates in This Version
 
-## Project Tree
+- New integrated superpixel labeler at `/labeler`
+- Dataset-driven labeler projects with in-app class management
+- New augmentation workflow at `/augment/new`
+- COCO RLE support in training pipeline (enabled by default)
+- SME-aligned HTML/CSS shell and branding
+
+## Project Layout
 
 ```text
-c:\Users\Antonio\FM
-├── app
-│   ├── __init__.py
+model_foundry/
+├── app/
 │   ├── routes.py
-│   ├── services
-│   │   ├── __init__.py
+│   ├── services/
 │   │   ├── coco.py
-│   │   ├── features.py
+│   │   ├── training.py
 │   │   ├── inference.py
 │   │   ├── schemas.py
 │   │   ├── storage.py
-│   │   └── training.py
-│   ├── static
-│   │   └── style.css
-│   └── templates
-│       ├── analysis_detail.html
-│       ├── analysis_new.html
-│       ├── base.html
-│       ├── dashboard.html
-│       ├── dataset_new.html
-│       ├── model_detail.html
-│       └── train_status.html
-├── instance
-├── models
-├── runs
-├── scripts
-│   └── generate_demo_dataset.py
+│   │   └── labeling/
+│   ├── templates/
+│   └── static/
+├── scripts/
+├── instance/
+├── models/
+├── runs/
 ├── requirements.txt
-├── run.py
-└── README.md
+└── run.py
 ```
 
-## Requirements
-
-- Python 3.10+ recommended
-- Windows/macOS/Linux (local filesystem access required)
-
 ## Setup
-
-1. Create and activate a virtual environment:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-```
-
-2. Install dependencies:
-
-```powershell
 pip install -r requirements.txt
-```
-
-3. Run the app:
-
-```powershell
 python run.py
 ```
 
-4. Open:
-
-```text
-http://127.0.0.1:5000
-```
-
-## Optional: Generate a Demo Dataset
-
-```powershell
-python scripts\generate_demo_dataset.py --output-dir demo_dataset --num-images 10 --image-size 256 --seed 42
-```
-
-Then register dataset:
-
-- Dataset folder path: `<project>\demo_dataset`
-- Image root: `images`
-- COCO JSON path: `annotations.json`
+Open: `http://127.0.0.1:5000`
 
 ## Workflow
 
-1. Register a dataset (`/datasets/new`)
-2. On dashboard (`/`), train a model:
-   - choose dataset
-   - set RF hyperparameters
-   - set feature config
-   - click Train
-3. View model details (`/models/<id>`)
-4. Create analysis run (`/analysis/new`):
-   - select model
-   - input image paths or folder+glob
-5. Review run outputs (`/analysis/<run_id>`)
+1. Open `/labeler` and create/select a labeler project
+2. For dataset-linked projects, sync classes from dataset or edit classes in-app
+3. Annotate via superpixels and export COCO (RLE)
+4. Register dataset in `/datasets/new` (or use `/augment/new` to generate + register)
+5. Train model from dashboard
+6. Run analysis in `/analysis/new`
 
-## Data/Model Behavior Notes
+## RLE Behavior
 
-- Class labels are never hardcoded.
-- Class mapping is dynamic per dataset:
-  - `background` is class index `0`
-  - COCO categories map to class indices `1..K` in dataset category order.
-- Overlap handling is configurable (`higher_area_wins` or `last_annotation_wins`), persisted in model metadata.
-- MVP supports polygon segmentations.
-  - RLE annotations are skipped with warnings, and count is recorded in metrics.
-- Trained artifacts:
-  - `model.joblib`
-  - `metadata.json` (dataset info, checksum, class mapping, feature/train config, metrics, timestamp, code version)
+- Training now decodes COCO RLE segmentations (compressed/uncompressed)
+- Polygons are still supported
+- Train setting `use_rle` defaults to `true`
 
-## Persistence
-
-SQLite DB file is created automatically at:
-
-```text
-instance/segmentation.sqlite3
-```
-
-Tables are auto-created on startup (`CREATE TABLE IF NOT EXISTS`):
-
-- `datasets`
-- `models`
-- `analysis_runs`
-- `analysis_run_items`
-
-## Environment Variables (Optional)
+## Optional Environment Variables
 
 - `SEG_APP_BASE_DIR`
 - `SEG_APP_INSTANCE_DIR`
@@ -140,6 +74,13 @@ Tables are auto-created on startup (`CREATE TABLE IF NOT EXISTS`):
 - `SEG_APP_CODE_VERSION`
 - `SEG_APP_RANDOM_SEED`
 - `FLASK_SECRET_KEY`
-
-By default, all paths are local subfolders under the project root.
-
+- `SEG_APP_LABELER_DIR`
+- `SEG_APP_LABELER_IMAGES_DIR`
+- `SEG_APP_LABELER_MASKS_DIR`
+- `SEG_APP_LABELER_COCO_DIR`
+- `SEG_APP_LABELER_CACHE_DIR`
+- `SEG_APP_LABELER_CATEGORIES`
+- `SEG_APP_LABELER_SLIC_N_SEGMENTS`
+- `SEG_APP_LABELER_SLIC_COMPACTNESS`
+- `SEG_APP_LABELER_SLIC_SIGMA`
+- `SEG_APP_LABELER_MIN_COCO_AREA`

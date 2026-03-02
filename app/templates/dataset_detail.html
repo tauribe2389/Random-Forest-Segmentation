@@ -1,0 +1,464 @@
+{% extends "base.html" %}
+{% block title %}Dataset {{ dataset_project.name }} - {{ workspace.name }}{% endblock %}
+{% block content %}
+{% set class_editor_open = class_edit_diff is not none %}
+<div id="dataset-control-center" class="dataset-cc-page">
+  <section class="panel dataset-cc-header-card" id="dataset-top">
+    <div class="dataset-cc-header-top">
+      <div class="dataset-cc-title-wrap">
+        <h2>{{ dataset_project.name }}</h2>
+        <div class="dataset-cc-meta">
+          <span class="badge">Editable Draft</span>
+          <span>Version v{{ draft_version }}</span>
+          <span>Workspace {{ workspace.name }}</span>
+          <span>Updated {{ dataset_project.updated_at|human_datetime }}</span>
+        </div>
+        <div class="dataset-cc-origin">
+          <strong>Origin:</strong>
+          {% if origin.url %}
+            <a href="{{ origin.url }}">{{ origin.label }}</a>
+          {% else %}
+            {{ origin.label }}
+          {% endif %}
+        </div>
+      </div>
+      <div class="btn-row dataset-cc-header-actions">
+        {% if start_label_url %}
+          <a class="primary-btn" href="{{ start_label_url }}">Start labeling</a>
+        {% else %}
+          <button type="button" class="primary-btn is-disabled" disabled>Start labeling</button>
+        {% endif %}
+        <a class="table-action-btn" href="#snapshots-lineage">Register snapshot</a>
+        <a class="table-action-btn secondary" href="#branch-draft-card">Branch draft</a>
+        <a class="table-action-btn secondary" href="{{ url_for('main.workspace_datasets', workspace_id=workspace.id) }}">Back to Datasets</a>
+      </div>
+    </div>
+
+    <div class="dataset-cc-stats">
+      <span class="selection-count-pill">Draft Images {{ stats.draft_image_count }}</span>
+      <span class="selection-count-pill">Labeled {{ stats.labeled_image_count }}</span>
+      <span class="selection-count-pill">Classes {{ stats.class_count }}</span>
+      <span class="selection-count-pill">Registrations {{ stats.registration_count }}</span>
+    </div>
+
+    <div class="dataset-guidance">
+      <strong>Recommended flow:</strong> finalize classes, label remaining unlabeled images, then register an immutable snapshot.
+    </div>
+
+    <details class="disclosure dataset-metadata-disclosure">
+      <summary>Draft Metadata</summary>
+      <div class="table-wrap">
+        <table class="model-detail-table">
+          <tbody>
+            <tr><th>Dataset Project ID</th><td>{{ dataset_project.id }}</td></tr>
+            <tr><th>Draft Version</th><td>v{{ draft_version }}</td></tr>
+            <tr>
+              <th>Origin</th>
+              <td>
+                {% if origin.url %}
+                  <a href="{{ origin.url }}">{{ origin.label }}</a>
+                {% else %}
+                  {{ origin.label }}
+                {% endif %}
+              </td>
+            </tr>
+            <tr><th>Workspace</th><td>{{ workspace.name }}</td></tr>
+            <tr><th>Images Directory</th><td><code>{{ dataset_project.images_dir }}</code></td></tr>
+            <tr><th>Masks Directory</th><td><code>{{ dataset_project.masks_dir }}</code></td></tr>
+            <tr><th>COCO Directory</th><td><code>{{ dataset_project.coco_dir }}</code></td></tr>
+            <tr><th>Updated</th><td>{{ dataset_project.updated_at|human_datetime }}</td></tr>
+            <tr>
+              <th>Latest Registration</th>
+              <td>
+                {% if registered_dataset %}
+                  <a href="{{ url_for('main.workspace_registered_dataset_detail', workspace_id=workspace.id, dataset_id=registered_dataset.id) }}">
+                    {{ registered_dataset.name }}
+                  </a>
+                  (draft v{{ registered_dataset.source_draft_version if registered_dataset.source_draft_version is not none else "?" }})
+                {% else %}
+                  Not registered yet
+                {% endif %}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+  </section>
+
+  <section class="panel dataset-cc-section" id="label-schema">
+    <div class="dataset-section-head">
+      <h2>Label Schema</h2>
+      <button type="button" class="table-action-btn" id="open-class-edit-btn">Edit classes</button>
+    </div>
+    <p class="muted">Classes are stable objects with persistent IDs. Rename and reorder keep mask assignments; only removal deletes masks.</p>
+    {% if stats.has_masks %}
+      <div class="dataset-warning-callout">
+        Existing masks were detected in this draft. Renaming/reordering keeps mask assignments; removing a class deletes its masks.
+      </div>
+    {% endif %}
+
+    <div class="table-wrap">
+      <table class="models-table datasets-table" aria-label="Current classes">
+        <thead>
+          <tr>
+            <th>Order</th>
+            <th>Class ID</th>
+            <th>Class Name</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for class_row in class_rows %}
+            <tr>
+              <td>{{ class_row.order }}</td>
+              <td><code>{{ class_row.id }}</code></td>
+              <td>{{ class_row.name }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <details id="class-editor-panel" class="dataset-class-editor"{% if class_editor_open %} open{% endif %}>
+      <summary>Edit Classes</summary>
+      <form
+        method="post"
+        action="{{ url_for('labeler.update_project_classes', project_id=dataset_project.id) }}"
+        class="grid-form"
+        id="dataset-class-form"
+        data-current-classes="{{ categories|tojson|forceescape }}"
+        data-has-masks="{{ '1' if stats.has_masks else '0' }}"
+      >
+        <input type="hidden" name="return_to" value="{{ request.path }}">
+        <label>
+          Class Names In Order (comma or newline separated)
+          <textarea id="dataset-classes-text" name="categories_text" required>{{ class_edit_categories_text }}</textarea>
+        </label>
+        <p class="muted">Existing names retain their IDs. New names create new IDs. Removed names delete that class and its masks.</p>
+
+        <section class="dataset-class-preview" aria-live="polite">
+          <h3>Change Preview</h3>
+          <div class="dataset-class-preview-grid">
+            <article>
+              <h4>Added</h4>
+              <ul id="class-preview-added" class="dataset-preview-list"></ul>
+            </article>
+            <article>
+              <h4>Removed</h4>
+              <ul id="class-preview-removed" class="dataset-preview-list"></ul>
+            </article>
+            <article>
+              <h4>Renamed (ID Retained)</h4>
+              <ul id="class-preview-renamed" class="dataset-preview-list"></ul>
+            </article>
+            <article>
+              <h4>Order Changes</h4>
+              <p id="class-preview-order" class="muted">No order change detected.</p>
+            </article>
+          </div>
+        </section>
+
+        <div id="class-destructive-warning" class="dataset-warning-callout" hidden>
+          Class removals are destructive and will delete masks for removed classes.
+        </div>
+        <div id="class-append-note" class="dataset-note-callout" hidden>
+          Append-only class additions are low risk and keep existing class mapping stable.
+        </div>
+
+        <div id="class-destructive-guard" class="dataset-destructive-guard" hidden>
+          <label class="dataset-inline-check">
+            <input id="class-confirm-destructive" type="checkbox" name="confirm_destructive" value="true">
+            I understand this will permanently delete masks for removed classes.
+          </label>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit">Update Classes</button>
+          <button type="button" class="secondary" id="cancel-class-edit-btn">Cancel</button>
+        </div>
+      </form>
+    </details>
+  </section>
+
+  <section class="panel dataset-cc-section" id="draft-images-section">
+    <div class="dataset-section-head">
+      <h2>Images in Draft</h2>
+      <div class="btn-row">
+        {% if label_next_unlabeled_url %}
+          <a class="table-action-btn" href="{{ label_next_unlabeled_url }}">Label next unlabeled</a>
+        {% else %}
+          <button type="button" class="table-action-btn secondary" disabled>Label next unlabeled</button>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if draft_image_rows %}
+      <div class="datasets-toolbar">
+        <label class="datasets-toolbar-item">
+          Search
+          <input type="text" id="draft-image-search" placeholder="Filter by filename">
+        </label>
+        <div class="datasets-toolbar-item">
+          Status
+          <div class="dataset-filter-chips" role="group" aria-label="Filter draft images by labeling status">
+            <button type="button" class="dataset-chip-btn is-active" data-draft-filter="all">All</button>
+            <button type="button" class="dataset-chip-btn" data-draft-filter="labeled">Labeled</button>
+            <button type="button" class="dataset-chip-btn" data-draft-filter="unlabeled">Unlabeled</button>
+          </div>
+        </div>
+        <div class="datasets-toolbar-item">
+          Bulk
+          <label class="dataset-inline-check">
+            <input type="checkbox" id="draft-bulk-toggle">
+            Enable bulk select
+          </label>
+        </div>
+        <div class="datasets-toolbar-actions">
+          <button type="button" class="table-action-btn secondary" id="draft-select-visible-btn">Select all visible</button>
+          <span class="selection-count-pill" id="draft-visible-pill">{{ draft_image_rows|length }} / {{ draft_image_rows|length }} shown</span>
+          <span class="selection-count-pill" id="draft-selected-pill">0 selected</span>
+        </div>
+      </div>
+
+      <form
+        method="post"
+        action="{{ url_for('main.remove_workspace_dataset_images', workspace_id=workspace.id, dataset_id=dataset_project.id) }}"
+        id="draft-bulk-remove-form"
+        class="dataset-bulk-bar"
+        hidden
+      >
+        <input type="hidden" name="confirm_remove" value="true">
+        <div id="draft-bulk-selected-inputs"></div>
+        <strong id="draft-bulk-count">0 selected</strong>
+        <button type="submit" class="link-btn link-btn-danger">Remove selected</button>
+        <span class="muted">Removing from draft does not delete original workspace images.</span>
+      </form>
+
+      <div class="collection-thumb-grid dataset-draft-grid" id="draft-images-grid">
+        {% for image in draft_image_rows %}
+          <article
+            class="collection-thumb-card draft-image-card"
+            data-image-name="{{ image.name|lower }}"
+            data-labeled="{{ '1' if image.is_labeled else '0' }}"
+          >
+            <label class="draft-select-control">
+              <input type="checkbox" class="draft-image-select-checkbox" value="{{ image.name }}">
+              <span>Select</span>
+            </label>
+            <a href="{{ url_for('labeler.dataset_page', workspace_id=workspace.id, dataset_id=dataset_project.id, image_name=image.name) }}">
+              <img
+                class="collection-thumb-image"
+                src="{{ url_for('labeler.dataset_api_thumbnail', workspace_id=workspace.id, dataset_id=dataset_project.id, image_name=image.name) }}"
+                alt="{{ image.name }}"
+                loading="lazy"
+              >
+            </a>
+            <div class="collection-thumb-meta">
+              <code title="{{ image.name }}">{{ image.name }}</code>
+              <span class="status-pill {{ 'is-good' if image.is_labeled else 'is-progress' }}">
+                {{ "Labeled" if image.is_labeled else "Unlabeled" }}
+              </span>
+              <div class="image-card-actions">
+                <a class="table-action-btn" href="{{ url_for('labeler.dataset_page', workspace_id=workspace.id, dataset_id=dataset_project.id, image_name=image.name) }}">Label</a>
+                <form
+                  method="post"
+                  action="{{ url_for('main.remove_workspace_dataset_image', workspace_id=workspace.id, dataset_id=dataset_project.id, image_name=image.name) }}"
+                  class="single-remove-form"
+                  data-image-name="{{ image.name }}"
+                  data-has-mask="{{ '1' if image.is_labeled else '0' }}"
+                >
+                  <button type="submit" class="table-action-btn secondary">Remove</button>
+                </form>
+              </div>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <h3>No images in this draft</h3>
+        <p class="muted">Add images from the workspace to begin labeling.</p>
+        <a class="primary-btn" href="#add-images-section">Go to Add Images</a>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="panel dataset-cc-section" id="add-images-section">
+    <div class="dataset-section-head">
+      <h2>Add Images From Workspace</h2>
+    </div>
+
+    {% if available_workspace_image_rows %}
+      <form method="post" action="{{ url_for('main.add_workspace_dataset_images', workspace_id=workspace.id, dataset_id=dataset_project.id) }}" id="workspace-add-form" class="dataset-add-workspace-form">
+        <div class="datasets-toolbar dataset-workspace-toolbar">
+          <label class="datasets-toolbar-item">
+            Search
+            <input type="text" id="workspace-image-search" placeholder="Filter by filename">
+          </label>
+          <label class="datasets-toolbar-item">
+            Sort
+            <select id="workspace-image-sort">
+              <option value="name_asc">Name (A-Z)</option>
+              <option value="name_desc">Name (Z-A)</option>
+            </select>
+          </label>
+          <div class="datasets-toolbar-item">
+            Selection
+            <button type="button" class="table-action-btn secondary" id="workspace-select-visible-btn">Select all visible</button>
+          </div>
+          <div class="datasets-toolbar-actions">
+            <span class="selection-count-pill" id="workspace-visible-pill">{{ available_workspace_image_rows|length }} / {{ available_workspace_image_rows|length }} shown</span>
+            <span class="selection-count-pill" id="workspace-selected-pill">0 selected</span>
+          </div>
+        </div>
+
+        <div class="collection-thumb-grid dataset-workspace-grid" id="workspace-images-grid">
+          {% for image in available_workspace_image_rows %}
+            <label class="collection-thumb-card workspace-image-card" data-image-name="{{ image.name|lower }}">
+              <div class="workspace-select-control">
+                <input type="checkbox" class="workspace-image-select" name="selected_images" value="{{ image.name }}">
+                <span>Select</span>
+              </div>
+              <img
+                class="collection-thumb-image"
+                src="{{ url_for('labeler.api_thumbnail', workspace_id=workspace.id, image_name=image.name) }}"
+                alt="{{ image.name }}"
+                loading="lazy"
+              >
+              <div class="collection-thumb-meta">
+                <code title="{{ image.name }}">{{ image.name }}</code>
+              </div>
+            </label>
+          {% endfor %}
+        </div>
+
+        <div id="workspace-add-bar" class="dataset-bulk-bar dataset-bulk-bar-add" hidden>
+          <strong id="workspace-add-count">0 selected</strong>
+          <button type="submit" class="primary-btn">Add selected images to draft</button>
+        </div>
+      </form>
+    {% else %}
+      <div class="empty-state">
+        <h3>No workspace images available to add</h3>
+        <p class="muted">All workspace images are already in this draft, or the workspace image library is empty.</p>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="panel dataset-cc-section" id="snapshots-lineage">
+    <div class="dataset-section-head">
+      <h2>Snapshots & Lineage</h2>
+    </div>
+
+    <div class="dataset-two-col-grid">
+      <article class="dataset-action-card" id="register-snapshot-card">
+        <h3>Register Snapshot</h3>
+        <p class="muted">Registration exports and freezes an immutable training snapshot. This draft remains editable.</p>
+        <p><strong>What gets frozen?</strong></p>
+        <ul class="dataset-frozen-list">
+          <li>Current draft image list</li>
+          <li>Current class taxonomy</li>
+          <li>COCO export outputs and checksums</li>
+          <li>Snapshot metadata and training paths</li>
+        </ul>
+        <form method="post" action="{{ url_for('main.register_workspace_dataset', workspace_id=workspace.id, dataset_id=dataset_project.id) }}" class="grid-form">
+          <label>
+            Registered Dataset Name
+            <input type="text" name="registered_name" value="{{ dataset_project.name }}">
+          </label>
+          <label class="dataset-inline-check">
+            <input type="checkbox" name="confirm_immutable" value="true" required>
+            I understand this snapshot is immutable.
+          </label>
+          <div class="form-actions">
+            <button type="submit">Export + Register Snapshot</button>
+          </div>
+        </form>
+      </article>
+
+      <article class="dataset-action-card" id="branch-draft-card">
+        <h3>Branch Draft</h3>
+        <p class="muted">Branch starts from the current draft state and creates a new editable lineage path.</p>
+        <form method="post" action="{{ url_for('main.branch_workspace_dataset', workspace_id=workspace.id, dataset_id=dataset_project.id) }}" class="grid-form">
+          <label>
+            New Draft Name
+            <input type="text" name="branch_name" value="{{ dataset_project.name }} branch" required>
+          </label>
+          <div class="form-actions">
+            <button type="submit">Create Branch Draft</button>
+          </div>
+        </form>
+      </article>
+    </div>
+
+    <section class="dataset-subsection">
+      <h3>Registration History</h3>
+      {% if registration_history %}
+        <div class="table-wrap">
+          <table class="models-table datasets-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Registered Name</th>
+                <th>Snapshot ID</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for snapshot in registration_history %}
+                <tr>
+                  <td><time datetime="{{ snapshot.created_at }}" title="{{ snapshot.created_at }}">{{ snapshot.created_at|human_datetime }}</time></td>
+                  <td>{{ snapshot.name }}</td>
+                  <td>{{ snapshot.id }}</td>
+                  <td>
+                    <div class="table-action-row">
+                      <a class="table-action-btn" href="{{ url_for('main.workspace_registered_dataset_detail', workspace_id=workspace.id, dataset_id=snapshot.id) }}">View</a>
+                      <a class="table-action-btn secondary" href="{{ url_for('main.workspace_models', workspace_id=workspace.id) }}">Train</a>
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="empty-state">
+          <h3>No snapshots yet</h3>
+          <p class="muted">Register this draft when you are ready to freeze it for training.</p>
+        </div>
+      {% endif %}
+    </section>
+
+    {% if related_models %}
+      <section class="dataset-subsection">
+        <h3>Models Trained On This Lineage</h3>
+        <div class="table-wrap">
+          <table class="models-table datasets-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Registered Snapshot</th>
+                <th>Status</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for model in related_models %}
+                <tr>
+                  <td>{{ model.id }}</td>
+                  <td><a href="{{ url_for('main.model_details', workspace_id=workspace.id, model_id=model.id) }}">{{ model.name }}</a></td>
+                  <td>{{ model.dataset_name }}</td>
+                  <td>{{ model.status }}</td>
+                  <td>{{ model.created_at|human_datetime }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {% endif %}
+  </section>
+</div>
+<script src="{{ url_for('static', filename='dataset_detail.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% block title %}Datasets - {{ workspace.name }}{% endblock %}
+{% block content %}
+{% set total_dataset_rows = dataset_projects|length + registered_datasets|length %}
+<section class="panel datasets-page-head">
+  <div class="datasets-page-head-row">
+    <div>
+      <h2>Datasets</h2>
+      <p class="muted">Manage draft labeling datasets and registered training-ready snapshots in one place.</p>
+    </div>
+    <div class="datasets-page-head-actions">
+      <a class="primary-btn" href="{{ url_for('main.register_dataset', workspace_id=workspace.id) }}">+ Create Dataset</a>
+    </div>
+  </div>
+</section>
+
+<section class="panel datasets-library-panel">
+  <div class="datasets-toolbar">
+    <label class="datasets-toolbar-item">
+      Search
+      <input type="text" id="dataset-search" placeholder="Dataset name or status" {% if not total_dataset_rows %}disabled{% endif %}>
+    </label>
+    <label class="datasets-toolbar-item">
+      Type
+      <select id="dataset-type-filter" {% if not total_dataset_rows %}disabled{% endif %}>
+        <option value="">All types</option>
+        <option value="draft">Draft</option>
+        <option value="registered">Registered</option>
+      </select>
+    </label>
+    <label class="datasets-toolbar-item">
+      Status
+      <select id="dataset-status-filter" {% if not total_dataset_rows %}disabled{% endif %}>
+        <option value="">All statuses</option>
+      </select>
+    </label>
+    <div class="datasets-toolbar-actions">
+      <button type="button" class="secondary" id="clear-dataset-filters" {% if not total_dataset_rows %}disabled{% endif %}>Reset</button>
+      <span class="selection-count-pill" id="datasets-visible-pill">{{ total_dataset_rows }} / {{ total_dataset_rows }} shown</span>
+    </div>
+  </div>
+
+  <section class="datasets-table-section" data-kind="draft">
+    <div class="datasets-section-head">
+      <h3>Draft Datasets</h3>
+      <span class="selection-count-pill" data-section-visible-pill>{{ dataset_projects|length }} / {{ dataset_projects|length }} shown</span>
+    </div>
+    {% if dataset_projects %}
+      <div class="table-wrap" data-table-wrap>
+        <table id="draft-datasets-table" class="models-table datasets-table" data-default-sort-key="updated" data-default-sort-direction="desc">
+          <thead>
+            <tr>
+              <th class="is-sortable" data-sort-key="name">Name</th>
+              <th class="is-sortable" data-sort-key="images">Images</th>
+              <th class="is-sortable" data-sort-key="classes">Classes</th>
+              <th class="is-sortable" data-sort-key="status">Status</th>
+              <th class="is-sortable is-sorted-desc" data-sort-key="updated">Last Edited</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for project in dataset_projects %}
+              {% if project.registration_history %}
+                {% set draft_status_label = project.registration_history|length ~ " registered snapshot(s)" %}
+                {% set draft_status_key = "registered-snapshots" %}
+                {% set draft_status_filter_label = "Registered snapshots" %}
+                {% set draft_status_class = "is-good" %}
+              {% else %}
+                {% set draft_status_label = "Labeling" %}
+                {% set draft_status_key = "labeling" %}
+                {% set draft_status_filter_label = "Labeling" %}
+                {% set draft_status_class = "is-progress" %}
+              {% endif %}
+              <tr
+                class="dataset-row"
+                data-kind="draft"
+                data-name="{{ (project.name or '')|lower }}"
+                data-status="{{ draft_status_key }}"
+                data-status-label="{{ draft_status_filter_label }}"
+                data-search="{{ ((project.name or '') ~ ' draft ' ~ draft_status_label ~ ' ' ~ (project.origin.label or ''))|lower }}"
+                data-images="{{ project.image_count }}"
+                data-classes="{{ project.categories|length }}"
+                data-updated="{{ project.updated_at }}"
+              >
+                <td>
+                  <div class="model-name">
+                    <span class="dataset-name">{{ project.name }}</span>
+                    <span class="draft-badge">Draft</span>
+                  </div>
+                  <div class="model-meta muted">Draft #{{ project.id }} • v{{ project.draft_version }}</div>
+                </td>
+                <td>{{ project.image_count }}</td>
+                <td>{{ project.categories|length }}</td>
+                <td><span class="status-pill {{ draft_status_class }}">{{ draft_status_label }}</span></td>
+                <td><time datetime="{{ project.updated_at }}" title="{{ project.updated_at }}">{{ project.updated_at|human_datetime }}</time></td>
+                <td>
+                  <div class="table-action-row">
+                    <a
+                      class="table-action-btn"
+                      href="{{ url_for('main.workspace_dataset_detail', workspace_id=workspace.id, dataset_id=project.id) }}"
+                    >
+                      <span class="table-action-icon" aria-hidden="true">&#8599;</span>
+                      <span>Open</span>
+                    </a>
+                    <form method="post" action="{{ url_for('main.register_workspace_dataset', workspace_id=workspace.id, dataset_id=project.id) }}" class="table-action-form">
+                      <input type="hidden" name="registered_name" value="{{ project.name }}">
+                      <button type="submit" class="table-action-btn secondary">
+                        <span class="table-action-icon" aria-hidden="true">&#10003;</span>
+                        <span>Register</span>
+                      </button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="datasets-table-empty muted" data-filter-empty hidden>No draft datasets match the current filters.</p>
+    {% else %}
+      <div class="empty-state">
+        <h3>No draft datasets yet</h3>
+        <p class="muted">Create a dataset from workspace images to start labeling.</p>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="datasets-table-section" data-kind="registered">
+    <div class="datasets-section-head">
+      <h3>Registered Datasets (Training Ready)</h3>
+      <span class="selection-count-pill" data-section-visible-pill>{{ registered_datasets|length }} / {{ registered_datasets|length }} shown</span>
+    </div>
+    {% if registered_datasets %}
+      <div class="table-wrap" data-table-wrap>
+        <table id="registered-datasets-table" class="models-table datasets-table" data-default-sort-key="created" data-default-sort-direction="desc">
+          <thead>
+            <tr>
+              <th class="is-sortable" data-sort-key="name">Name</th>
+              <th class="is-sortable" data-sort-key="categories">Categories</th>
+              <th class="is-sortable is-sorted-desc" data-sort-key="created">Created</th>
+              <th class="is-sortable" data-sort-key="status">Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for dataset in registered_datasets %}
+              <tr
+                class="dataset-row"
+                data-kind="registered"
+                data-name="{{ (dataset.name or '')|lower }}"
+                data-status="training-ready"
+                data-status-label="Training Ready"
+                data-search="{{ ((dataset.name or '') ~ ' registered training ready')|lower }}"
+                data-categories="{{ dataset.categories_json|length }}"
+                data-created="{{ dataset.created_at }}"
+              >
+                <td>
+                  <div class="model-name">{{ dataset.name }}</div>
+                  <div class="model-meta muted">
+                    Dataset #{{ dataset.id }}
+                    {% if dataset.source_draft_project_id %}
+                      • from draft #{{ dataset.source_draft_project_id }}{% if dataset.source_draft_version %} v{{ dataset.source_draft_version }}{% endif %}
+                    {% endif %}
+                  </div>
+                </td>
+                <td>{{ dataset.categories_json|length }}</td>
+                <td><time datetime="{{ dataset.created_at }}" title="{{ dataset.created_at }}">{{ dataset.created_at|human_datetime }}</time></td>
+                <td><span class="status-pill is-good">Training Ready</span></td>
+                <td>
+                  <div class="table-action-row">
+                    <a
+                      class="table-action-btn"
+                      href="{{ url_for('main.workspace_registered_dataset_detail', workspace_id=workspace.id, dataset_id=dataset.id) }}"
+                    >
+                      <span class="table-action-icon" aria-hidden="true">&#8599;</span>
+                      <span>Open</span>
+                    </a>
+                    <a
+                      class="table-action-btn secondary"
+                      href="{{ url_for('main.augment_new', workspace_id=workspace.id, source_dataset_id=dataset.id) }}"
+                    >
+                      <span class="table-action-icon" aria-hidden="true">&#9881;</span>
+                      <span>Augment</span>
+                    </a>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="datasets-table-empty muted" data-filter-empty hidden>No registered datasets match the current filters.</p>
+    {% else %}
+      <div class="empty-state">
+        <h3>No registered datasets yet</h3>
+        <p class="muted">Register a draft dataset to make it available for training.</p>
+      </div>
+    {% endif %}
+  </section>
+</section>
+<script src="{{ url_for('static', filename='datasets_page.js') }}"></script>
+{% endblock %}

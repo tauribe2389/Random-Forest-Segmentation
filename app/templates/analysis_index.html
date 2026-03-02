@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}Analysis - {{ workspace.name }}{% endblock %}
+{% block content %}
+<section class="panel models-page-head">
+  <div class="models-page-head-row">
+    <div>
+      <h2>Analysis Runs</h2>
+      <p class="muted">Review, compare, and relaunch segmentation analysis runs.</p>
+    </div>
+    <div class="models-page-head-actions">
+      <a class="primary-btn" href="{{ url_for('main.new_analysis', workspace_id=workspace.id) }}">+ New Analysis Run</a>
+    </div>
+  </div>
+</section>
+
+<section class="panel models-library-panel">
+  <div class="models-toolbar">
+    <label class="models-toolbar-item">
+      Search
+      <input type="text" id="analysis-search" placeholder="Run ID, model, status, or refinement" {% if not runs %}disabled{% endif %}>
+    </label>
+    <label class="models-toolbar-item">
+      Status
+      <select id="analysis-status-filter" {% if not runs %}disabled{% endif %}>
+        <option value="">All statuses</option>
+      </select>
+    </label>
+    <label class="models-toolbar-item">
+      Model
+      <select id="analysis-model-filter" {% if not runs %}disabled{% endif %}>
+        <option value="">All models</option>
+      </select>
+    </label>
+    <div class="models-toolbar-actions">
+      <label class="models-toolbar-item">
+        Refinement
+        <select id="analysis-refinement-filter" {% if not runs %}disabled{% endif %}>
+          <option value="">All runs</option>
+          <option value="refined">Refined enabled</option>
+          <option value="raw">Raw only</option>
+        </select>
+      </label>
+      <button type="button" class="secondary" id="analysis-clear-filters" {% if not runs %}disabled{% endif %}>Reset</button>
+      <span class="selection-count-pill" id="analysis-visible-pill">{{ runs|length }} / {{ runs|length }} shown</span>
+    </div>
+  </div>
+
+  {% if runs %}
+    <div class="table-wrap">
+      <table id="analysis-runs-table" class="models-table datasets-table" data-default-sort-key="created" data-default-sort-direction="desc">
+        <thead>
+          <tr>
+            <th class="is-sortable" data-sort-key="run_id">Run ID</th>
+            <th class="is-sortable is-sorted-desc" data-sort-key="created">Date</th>
+            <th class="is-sortable" data-sort-key="model">Model</th>
+            <th class="is-sortable" data-sort-key="images">Images</th>
+            <th class="is-sortable" data-sort-key="status">Status</th>
+            <th class="is-sortable" data-sort-key="refinement">Refinement</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for run in runs %}
+            {% set status_key = (run.status or 'unknown')|lower %}
+            {% if status_key in ["completed", "trained", "success"] %}
+              {% set status_class = "is-good" %}
+            {% elif status_key in ["running", "queued", "training"] %}
+              {% set status_class = "is-progress" %}
+            {% elif status_key in ["failed", "error"] %}
+              {% set status_class = "is-bad" %}
+            {% else %}
+              {% set status_class = "is-neutral" %}
+            {% endif %}
+            {% set refinement_key = "refined" if run.postprocess_enabled else "raw" %}
+            {% set refinement_label = "Refined enabled" if run.postprocess_enabled else "Raw only" %}
+            {% set post_cfg = run.postprocess_config_json or {} %}
+            <tr
+              class="analysis-run-row"
+              data-run-id="{{ run.id }}"
+              data-created="{{ run.created_at }}"
+              data-model="{{ (run.model_name or '')|lower }}"
+              data-model-label="{{ run.model_name }}"
+              data-images="{{ run.num_images }}"
+              data-status="{{ status_key }}"
+              data-status-label="{{ run.status }}"
+              data-refinement="{{ refinement_key }}"
+              data-search="{{ ('run ' ~ run.id ~ ' ' ~ (run.model_name or '') ~ ' ' ~ (run.status or '') ~ ' ' ~ refinement_label)|lower }}"
+            >
+              <td>{{ run.id }}</td>
+              <td><time datetime="{{ run.created_at }}" title="{{ run.created_at }}">{{ run.created_at|human_datetime }}</time></td>
+              <td>
+                <div class="model-name">{{ run.model_name }}</div>
+                <div class="model-meta muted">Run #{{ run.id }}</div>
+              </td>
+              <td>{{ run.num_images }}</td>
+              <td><span class="status-pill {{ status_class }}">{{ run.status }}</span></td>
+              <td>
+                {% if run.postprocess_enabled %}
+                  <span class="badge">Refined enabled</span>
+                  <div class="analysis-config-mini">
+                    &lambda;={{ "%.2f"|format(post_cfg.get("lambda_smooth", 0.7)|float) }}
+                    • edge={{ "%.2f"|format(post_cfg.get("edge_awareness", 0.5)|float) }}
+                    • iter={{ post_cfg.get("iterations", 8)|int }}
+                    {% if post_cfg.get("slic_n_segments") %}
+                      • n={{ post_cfg.get("slic_n_segments")|int }}
+                    {% else %}
+                      • area={{ post_cfg.get("slic_target_superpixel_area_px", 900)|int }}px
+                    {% endif %}
+                  </div>
+                {% else %}
+                  <span class="badge subtle">Raw only</span>
+                  <div class="analysis-config-mini">No smoothing</div>
+                {% endif %}
+              </td>
+              <td>
+                <div class="table-action-row">
+                  <a class="table-action-btn" href="{{ url_for('main.analysis_details', workspace_id=workspace.id, run_id=run.id) }}">
+                    <span class="table-action-icon" aria-hidden="true">&#8599;</span>
+                    <span>Open</span>
+                  </a>
+                  <a class="table-action-btn secondary" href="{{ url_for('main.new_analysis', workspace_id=workspace.id, model_id=run.model_id) }}">
+                    <span class="table-action-icon" aria-hidden="true">&#10227;</span>
+                    <span>Re-run</span>
+                  </a>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="datasets-table-empty muted" id="analysis-filter-empty" hidden>No analysis runs match the current filters.</p>
+  {% else %}
+    <div class="empty-state">
+      <h3>No analysis runs yet</h3>
+      <p class="muted">Create your first analysis run to compare raw and refined outputs.</p>
+      <a class="primary-btn" href="{{ url_for('main.new_analysis', workspace_id=workspace.id) }}">New Analysis Run</a>
+    </div>
+  {% endif %}
+</section>
+<script src="{{ url_for('static', filename='analysis_page.js') }}"></script>
+{% endblock %}

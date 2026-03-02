@@ -1,170 +1,157 @@
 {% extends "base.html" %}
-{% block title %}Dashboard - Segmentation Trainer{% endblock %}
+{% block title %}Workspace Dashboard - {{ app_name }}{% endblock %}
 {% block content %}
-<section class="panel">
-  <h2>Trained Models</h2>
-  {% if models %}
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Name</th>
-          <th>Dataset</th>
-          <th>Created</th>
-          <th>Classes</th>
-          <th>Status</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for model in models %}
-          <tr>
-            <td>{{ model.id }}</td>
-            <td>{{ model.name }}</td>
-            <td>{{ model.dataset_name }}</td>
-            <td>{{ model.created_at }}</td>
-            <td>{{ model.classes_count }}</td>
-            <td>{{ model.status }}</td>
-            <td>
-              <a href="{{ url_for('main.new_analysis', model_id=model.id) }}">Run analysis</a>
-              |
-              <a href="{{ url_for('main.model_details', model_id=model.id) }}">View details</a>
-            </td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p>No models trained yet.</p>
-  {% endif %}
+<section class="panel workspace-summary-card">
+  <div class="workspace-summary-head">
+    <h2>{{ workspace.name }}</h2>
+    <button type="button" id="open-workspace-modal">New Workspace</button>
+  </div>
+  <div class="workspace-stats-grid">
+    <article class="workspace-stat">
+      <span class="workspace-stat-label">Images</span>
+      <strong>{{ summary.images }}</strong>
+    </article>
+    <article class="workspace-stat">
+      <span class="workspace-stat-label">Datasets</span>
+      <strong>{{ summary.datasets }}</strong>
+    </article>
+    <article class="workspace-stat">
+      <span class="workspace-stat-label">Models</span>
+      <strong>{{ summary.models }}</strong>
+    </article>
+    <article class="workspace-stat">
+      <span class="workspace-stat-label">Analysis Runs</span>
+      <strong>{{ summary.analysis }}</strong>
+    </article>
+  </div>
 </section>
 
-<section class="panel">
-  <h2>Create &amp; Train New Model</h2>
-  {% if not datasets %}
-    <p>No datasets registered yet. <a href="{{ url_for('main.register_dataset') }}">Register a dataset first</a>.</p>
-  {% else %}
-    <form action="{{ url_for('main.train_new_model') }}" method="post" class="grid-form">
-      <label>
-        Model Name
-        <input type="text" name="model_name" required placeholder="rf-segmentation-v1">
-      </label>
+<section class="panel primary-action-card">
+  <p class="muted">Next best step</p>
+  <h2>{{ primary_action.title }}</h2>
+  <p>{{ primary_action.description }}</p>
+  <p><a class="primary-btn" href="{{ primary_action.url }}">{{ primary_action.label }}</a></p>
+</section>
 
-      <label>
-        Dataset
-        <select name="dataset_id" required>
-          {% for dataset in datasets %}
-            <option value="{{ dataset.id }}">{{ dataset.name }} (id={{ dataset.id }})</option>
+{% if recent_models or recent_runs %}
+  <section class="panel">
+    <h2>Recent Activity</h2>
+
+    {% if recent_models %}
+      <h3>Recent Models</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Dataset</th>
+            <th>Status</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for model in recent_models %}
+            <tr>
+              <td>{{ model.id }}</td>
+              <td><a href="{{ url_for('main.model_details', workspace_id=workspace.id, model_id=model.id) }}">{{ model.name }}</a></td>
+              <td>{{ model.dataset_name }}</td>
+              <td>{{ model.status }}</td>
+              <td>{{ model.created_at }}</td>
+            </tr>
           {% endfor %}
-        </select>
-      </label>
+        </tbody>
+      </table>
+    {% endif %}
 
-      <h3>Random Forest Hyperparameters</h3>
-      <label>
-        n_estimators
-        <input type="number" name="n_estimators" min="1" value="200">
-      </label>
-      <label>
-        max_depth (blank = none)
-        <input type="number" name="max_depth" min="1" placeholder="None">
-      </label>
-      <label>
-        min_samples_split
-        <input type="number" name="min_samples_split" min="2" value="2">
-      </label>
-      <label>
-        min_samples_leaf
-        <input type="number" name="min_samples_leaf" min="1" value="1">
-      </label>
-      <label>
-        class_weight
-        <select name="class_weight">
-          <option value="balanced_subsample">balanced_subsample</option>
-          <option value="balanced">balanced</option>
-          <option value="none">none</option>
-        </select>
-      </label>
+    {% if recent_runs %}
+      <h3>Recent Analysis Runs</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Model</th>
+            <th>Images</th>
+            <th>Status</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for run in recent_runs %}
+            <tr>
+              <td><a href="{{ url_for('main.analysis_details', workspace_id=workspace.id, run_id=run.id) }}">{{ run.id }}</a></td>
+              <td>{{ run.model_name }}</td>
+              <td>{{ run.num_images }}</td>
+              <td>{{ run.status }}</td>
+              <td>{{ run.created_at }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </section>
+{% endif %}
 
-      <h3>Sampling &amp; Split</h3>
+<section id="workspace-modal" class="modal-backdrop" hidden aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="workspace-modal-title">
+    <div class="modal-head">
+      <h3 id="workspace-modal-title">Create Workspace</h3>
+      <button id="close-workspace-modal" type="button" class="secondary">Close</button>
+    </div>
+    <form action="{{ url_for('labeler.create_workspace') }}" method="post" class="grid-form" enctype="multipart/form-data">
+      <input type="hidden" name="return_to" value="dashboard">
       <label>
-        max_samples_per_class
-        <input type="number" name="max_samples_per_class" min="1" value="5000">
+        Workspace Name
+        <input type="text" name="name" required placeholder="experiment_workspace_a">
       </label>
       <label>
-        validation_split (0-1)
-        <input type="number" step="0.05" min="0" max="0.95" name="validation_split" value="0.2">
+        Upload Initial Images (optional)
+        <input type="file" name="image_files" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff" multiple>
       </label>
-      <label>
-        overlap policy
-        <select name="overlap_policy">
-          <option value="higher_area_wins">higher_area_wins</option>
-          <option value="last_annotation_wins">last_annotation_wins</option>
-        </select>
-      </label>
-      <label>
-        random_state
-        <input type="number" name="random_state" value="{{ default_seed }}">
-      </label>
-
-      <h3>Feature Configuration</h3>
-      <div class="inline-options">
-        <label><input type="checkbox" name="use_rgb" checked> RGB</label>
-        <label><input type="checkbox" name="use_hsv" checked> HSV</label>
-        <label><input type="checkbox" name="use_lab" checked> LAB</label>
-        <label><input type="checkbox" name="use_sobel" checked> Sobel</label>
-        <label><input type="checkbox" name="use_lbp"> LBP</label>
-      </div>
-      <label>
-        gaussian_sigmas (comma-separated)
-        <input type="text" name="gaussian_sigmas" value="1.0,3.0">
-      </label>
-      <label>
-        lbp_points
-        <input type="number" name="lbp_points" min="1" value="8">
-      </label>
-      <label>
-        lbp_radius
-        <input type="number" name="lbp_radius" min="1" value="1">
-      </label>
-
       <div class="form-actions">
-        <button type="submit">Train Model</button>
+        <button type="submit">Create Workspace</button>
+        <button id="cancel-workspace-modal" type="button" class="secondary">Cancel</button>
       </div>
     </form>
-  {% endif %}
+  </div>
 </section>
 
-<section class="panel">
-  <h2>Analysis Runs</h2>
-  <p><a class="btn-link" href="{{ url_for('main.new_analysis') }}">New analysis run</a></p>
-  {% if runs %}
-    <table>
-      <thead>
-        <tr>
-          <th>Run ID</th>
-          <th>Date</th>
-          <th>Model</th>
-          <th>Images</th>
-          <th>Status</th>
-          <th>Details</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for run in runs %}
-          <tr>
-            <td>{{ run.id }}</td>
-            <td>{{ run.created_at }}</td>
-            <td>{{ run.model_name }}</td>
-            <td>{{ run.num_images }}</td>
-            <td>{{ run.status }}</td>
-            <td><a href="{{ url_for('main.analysis_details', run_id=run.id) }}">View results</a></td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p>No analysis runs yet.</p>
-  {% endif %}
-</section>
+<script>
+  (function () {
+    var openBtn = document.getElementById("open-workspace-modal");
+    var closeBtn = document.getElementById("close-workspace-modal");
+    var cancelBtn = document.getElementById("cancel-workspace-modal");
+    var modal = document.getElementById("workspace-modal");
+    if (!openBtn || !closeBtn || !cancelBtn || !modal) {
+      return;
+    }
+
+    function openModal() {
+      modal.hidden = false;
+      modal.setAttribute("aria-hidden", "false");
+      var firstInput = modal.querySelector("input[name='name']");
+      if (firstInput) {
+        firstInput.focus();
+      }
+    }
+
+    function closeModal() {
+      modal.hidden = true;
+      modal.setAttribute("aria-hidden", "true");
+    }
+
+    openBtn.addEventListener("click", openModal);
+    closeBtn.addEventListener("click", closeModal);
+    cancelBtn.addEventListener("click", closeModal);
+    modal.addEventListener("click", function (event) {
+      if (event.target === modal) {
+        closeModal();
+      }
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && !modal.hidden) {
+        closeModal();
+      }
+    });
+  })();
+</script>
 {% endblock %}
-

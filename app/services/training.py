@@ -163,6 +163,7 @@ def train_model(
 
     warnings: list[str] = []
     skipped_rle_total = 0
+    used_rle_total = 0
     sampled_counts: dict[int, int] = {class_idx: 0 for class_idx in class_indices}
     val_sampled_counts: dict[int, int] = {class_idx: 0 for class_idx in class_indices}
 
@@ -186,14 +187,16 @@ def train_model(
         h, w = image.shape[:2]
 
         image_annotations = annotations_map.get(image_id, [])
-        mask, mask_warnings, skipped_rle = build_mask(
+        mask, mask_warnings, skipped_rle, used_rle = build_mask(
             h,
             w,
             image_annotations,
             category_to_class,
             overlap_policy=train_config.overlap_policy,
+            use_rle=train_config.use_rle,
         )
         skipped_rle_total += skipped_rle
+        used_rle_total += used_rle
         warnings.extend(mask_warnings)
 
         feature_stack, _ = extract_feature_stack(image, feature_config)
@@ -263,6 +266,7 @@ def train_model(
         "sampled_pixels_by_class": {
             class_name_by_idx[idx]: count for idx, count in sampled_counts.items()
         },
+        "rle_annotations_used": used_rle_total,
         "skipped_rle_annotations": skipped_rle_total,
     }
 

@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Registered Dataset {{ dataset.name }}{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="dataset-card-top">
+    <h2>{{ dataset.name }}</h2>
+    <a class="link-btn" href="{{ url_for('main.workspace_datasets', workspace_id=workspace.id) }}">Back to Datasets</a>
+  </div>
+  <table>
+    <tbody>
+      <tr><th>ID</th><td>{{ dataset.id }}</td></tr>
+      <tr><th>Created</th><td>{{ dataset.created_at|human_datetime }}</td></tr>
+      <tr>
+        <th>Source Draft</th>
+        <td>
+          {% if source_draft_project %}
+            <a href="{{ url_for('main.workspace_dataset_detail', workspace_id=workspace.id, dataset_id=source_draft_project.id) }}">
+              {{ source_draft_project.name }}
+            </a>
+            (id={{ source_draft_project.id }})
+          {% elif dataset.source_draft_project_id is not none %}
+            Draft #{{ dataset.source_draft_project_id }}
+          {% else %}
+            -
+          {% endif %}
+        </td>
+      </tr>
+      <tr><th>Source Draft Version</th><td>{% if dataset.source_draft_version is not none %}v{{ dataset.source_draft_version }}{% else %}-{% endif %}</td></tr>
+      <tr><th>Dataset Path</th><td><code>{{ dataset.dataset_path }}</code></td></tr>
+      <tr><th>Image Root</th><td><code>{{ dataset.image_root }}</code></td></tr>
+      <tr><th>COCO JSON</th><td><code>{{ dataset.coco_json_path }}</code></td></tr>
+      <tr><th>Checksum</th><td><code>{{ dataset.coco_checksum }}</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Categories</h2>
+  <pre>{{ dataset.categories_json | prettyjson }}</pre>
+</section>
+
+{% if related_models %}
+  <section class="panel">
+    <h2>Models Trained On This Dataset</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Name</th>
+          <th>Status</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for model in related_models %}
+          <tr>
+            <td>{{ model.id }}</td>
+            <td><a href="{{ url_for('main.model_details', workspace_id=workspace.id, model_id=model.id) }}">{{ model.name }}</a></td>
+            <td>{{ model.status }}</td>
+            <td>{{ model.created_at|human_datetime }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endif %}
+{% endblock %}

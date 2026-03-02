@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% block title %}Models - {{ workspace.name }}{% endblock %}
+{% block content %}
+<section class="panel models-page-head">
+  <div class="models-page-head-row">
+    <div>
+      <h2>Models</h2>
+      <p class="muted">Train, inspect, and reuse models in this workspace.</p>
+    </div>
+    <div class="models-page-head-actions">
+      {% if datasets %}
+        <button type="button" class="primary-btn" data-open-train-modal>+ Train Model</button>
+      {% else %}
+        <button type="button" class="primary-btn is-disabled" disabled title="Register a dataset first">+ Train Model</button>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="panel models-library-panel">
+  <div class="models-toolbar">
+    <label class="models-toolbar-item">
+      Search
+      <input type="text" id="model-search" placeholder="Model name, dataset, or status" {% if not models %}disabled{% endif %}>
+    </label>
+    <label class="models-toolbar-item">
+      Status
+      <select id="model-status-filter" {% if not models %}disabled{% endif %}>
+        <option value="">All statuses</option>
+      </select>
+    </label>
+    <label class="models-toolbar-item">
+      Dataset
+      <select id="model-dataset-filter" {% if not models %}disabled{% endif %}>
+        <option value="">All datasets</option>
+      </select>
+    </label>
+    <div class="models-toolbar-actions">
+      <button type="button" class="secondary" id="clear-model-filters" {% if not models %}disabled{% endif %}>Reset</button>
+      <span class="selection-count-pill" id="model-selection-pill">0 selected</span>
+      <span class="selection-count-pill" id="models-visible-pill">{{ models|length }} / {{ models|length }} shown</span>
+    </div>
+  </div>
+
+  {% if models %}
+    <div class="table-wrap">
+      <table id="models-table" class="models-table">
+        <thead>
+          <tr>
+            <th class="select-col"><input type="checkbox" id="model-select-all" aria-label="Select all visible models"></th>
+            <th class="is-sortable" data-sort-key="name">Name</th>
+            <th class="is-sortable" data-sort-key="dataset">Dataset</th>
+            <th class="is-sortable is-sorted-desc" data-sort-key="created">Created</th>
+            <th class="is-sortable" data-sort-key="status">Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for model in models %}
+            {% set status_key = (model.status or "unknown")|lower %}
+            {% if status_key in ["trained", "success", "completed"] %}
+              {% set status_class = "is-good" %}
+            {% elif status_key in ["running", "queued", "training"] %}
+              {% set status_class = "is-progress" %}
+            {% elif status_key in ["failed", "error"] %}
+              {% set status_class = "is-bad" %}
+            {% else %}
+              {% set status_class = "is-neutral" %}
+            {% endif %}
+            <tr
+              class="model-row"
+              tabindex="0"
+              data-model-id="{{ model.id }}"
+              data-name="{{ (model.name or '')|lower }}"
+              data-dataset="{{ (model.dataset_name or '')|lower }}"
+              data-dataset-label="{{ model.dataset_name }}"
+              data-created="{{ model.created_at }}"
+              data-status="{{ (model.status or '')|lower }}"
+              data-status-label="{{ model.status }}"
+              data-details-url="{{ url_for('main.model_details', workspace_id=workspace.id, model_id=model.id) }}"
+              data-analysis-url="{{ url_for('main.new_analysis', workspace_id=workspace.id, model_id=model.id) }}"
+            >
+              <td class="select-col"><input type="checkbox" class="model-row-select" aria-label="Select model {{ model.name }}"></td>
+              <td>
+                <div class="model-name">{{ model.name }}</div>
+                <div class="model-meta muted">Model #{{ model.id }}{% if model.classes_count %} • {{ model.classes_count }} classes{% endif %}</div>
+              </td>
+              <td>{{ model.dataset_name }}</td>
+              <td><time datetime="{{ model.created_at }}" title="{{ model.created_at }}">{{ model.created_at|human_datetime }}</time></td>
+              <td><span class="status-pill {{ status_class }}">{{ model.status }}</span></td>
+              <td>
+                <div class="table-action-row">
+                  <a class="table-action-btn" href="{{ url_for('main.model_details', workspace_id=workspace.id, model_id=model.id) }}"><span class="table-action-icon">🔎</span><span>Details</span></a>
+                  <a class="table-action-btn secondary" href="{{ url_for('main.new_analysis', workspace_id=workspace.id, model_id=model.id) }}"><span class="table-action-icon">▶</span><span>Run Analysis</span></a>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty-state">
+      <h3>No models yet</h3>
+      <p class="muted">Train your first model from a registered dataset.</p>
+      {% if datasets %}
+        <button type="button" class="primary-btn" data-open-train-modal>Train Model</button>
+      {% else %}
+        <p class="muted">No registered datasets available yet.</p>
+        <a class="primary-btn" href="{{ url_for('main.workspace_datasets', workspace_id=workspace.id) }}">Go to Datasets</a>
+      {% endif %}
+    </div>
+  {% endif %}
+</section>
+
+<div class="modal-backdrop models-train-modal" id="train-model-modal" hidden>
+  <div class="modal-card models-train-card" role="dialog" aria-modal="true" aria-labelledby="train-model-title">
+    <div class="modal-head">
+      <h3 id="train-model-title">Train New Model</h3>
+      <button type="button" class="secondary" id="close-train-modal">Close</button>
+    </div>
+    {% if not datasets %}
+      <p>No datasets registered yet in this workspace.</p>
+    {% else %}
+      <form action="{{ url_for('main.train_new_model', workspace_id=workspace.id) }}" method="post" class="grid-form" id="train-model-form" novalidate>
+        <div class="models-form-basic">
+          <h4>Basic Settings</h4>
+          <div class="models-form-grid">
+            <label>Model Name<input type="text" name="model_name" id="train-model-name" required minlength="3" placeholder="rf-segmentation-v1"><span class="hint">Use a short, descriptive name.</span><span class="field-error" data-error-for="model_name"></span></label>
+            <label>
+              Dataset
+              <select name="dataset_id" id="train-dataset-id" required>
+                {% for dataset in datasets %}
+                  <option value="{{ dataset.id }}" data-created="{{ dataset.created_at|human_datetime }}" data-draft-id="{{ dataset.source_draft_project_id or '' }}" data-draft-version="{{ dataset.source_draft_version or '' }}">{{ dataset.name }}</option>
+                {% endfor %}
+              </select>
+              <span class="hint" id="train-dataset-context"></span>
+              <span class="field-error" data-error-for="dataset_id"></span>
+            </label>
+            <label>random_state<input type="number" name="random_state" value="{{ default_seed }}" required><span class="hint">Seed for reproducible training runs.</span></label>
+          </div>
+        </div>
+
+        <details class="accordion-panel"><summary>Advanced: Random Forest Hyperparameters</summary><div class="accordion-body models-form-grid">
+          <label>n_estimators<input type="number" name="n_estimators" min="1" value="200" required><span class="field-error" data-error-for="n_estimators"></span></label>
+          <label>max_depth (blank = none)<input type="number" name="max_depth" min="1" placeholder="None"><span class="field-error" data-error-for="max_depth"></span></label>
+          <label>min_samples_split<input type="number" name="min_samples_split" min="2" value="2" required><span class="field-error" data-error-for="min_samples_split"></span></label>
+          <label>min_samples_leaf<input type="number" name="min_samples_leaf" min="1" value="1" required><span class="field-error" data-error-for="min_samples_leaf"></span></label>
+          <label>class_weight<select name="class_weight"><option value="balanced_subsample">balanced_subsample</option><option value="balanced">balanced</option><option value="none">none</option></select></label>
+        </div></details>
+
+        <details class="accordion-panel"><summary>Advanced: Sampling &amp; Split</summary><div class="accordion-body models-form-grid">
+          <label>max_samples_per_class<input type="number" name="max_samples_per_class" min="1" value="5000" required><span class="field-error" data-error-for="max_samples_per_class"></span></label>
+          <label>validation_split (0-0.95)<input type="number" step="0.05" min="0" max="0.95" name="validation_split" value="0.2" required><span class="field-error" data-error-for="validation_split"></span></label>
+          <label>overlap policy<select name="overlap_policy"><option value="higher_area_wins">higher_area_wins</option><option value="last_annotation_wins">last_annotation_wins</option></select></label>
+          <label>segmentation format<select name="use_rle"><option value="true">use RLE + polygons (recommended)</option><option value="false">ignore RLE (polygon-only)</option></select></label>
+        </div></details>
+
+        <details class="accordion-panel"><summary>Advanced: Feature Configuration</summary><div class="accordion-body">
+          <div class="inline-options" id="feature-options-group">
+            <label><input type="checkbox" name="use_rgb" checked> RGB</label>
+            <label><input type="checkbox" name="use_hsv" checked> HSV</label>
+            <label><input type="checkbox" name="use_lab" checked> LAB</label>
+            <label><input type="checkbox" name="use_sobel" checked> Sobel</label>
+            <label><input type="checkbox" name="use_lbp"> LBP</label>
+          </div>
+          <span class="field-error" data-error-for="feature_flags"></span>
+          <div class="models-form-grid">
+            <label>gaussian_sigmas (comma-separated)<input type="text" name="gaussian_sigmas" value="1.0,3.0"><span class="field-error" data-error-for="gaussian_sigmas"></span></label>
+            <label>lbp_points<input type="number" name="lbp_points" min="1" value="8"><span class="field-error" data-error-for="lbp_points"></span></label>
+            <label>lbp_radius<input type="number" name="lbp_radius" min="1" value="1"><span class="field-error" data-error-for="lbp_radius"></span></label>
+          </div>
+        </div></details>
+
+        <p class="models-form-error" id="train-form-error" hidden></p>
+        <div class="form-actions models-form-actions">
+          <button type="submit" id="train-submit-btn">Train Model</button>
+          <button type="button" class="secondary" id="train-reset-btn">Reset</button>
+        </div>
+      </form>
+    {% endif %}
+  </div>
+</div>
+<script src="{{ url_for('static', filename='models_page.js') }}"></script>
+{% endblock %}

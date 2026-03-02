@@ -32,11 +32,10 @@
   {% endif %}
 
   <p>
-    <a href="{{ url_for('main.dashboard') }}">Back to dashboard</a>
+    <a href="{{ url_for('main.workspace_dashboard', workspace_id=workspace.id) }}">Back to dashboard</a>
     {% if model_id %}
-      | <a href="{{ url_for('main.model_details', model_id=model_id) }}">Open model details</a>
+      | <a href="{{ url_for('main.model_details', workspace_id=workspace.id, model_id=model_id) }}">Open model details</a>
     {% endif %}
   </p>
 </section>
 {% endblock %}
-

@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Augmentation Result - {{ app_name }}{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Augmentation Complete</h2>
+  <table>
+    <tbody>
+      <tr><th>Source Dataset</th><td>{{ source_dataset.name }} (id={{ source_dataset.id }})</td></tr>
+      <tr><th>Output Directory</th><td><code>{{ result.output_dir }}</code></td></tr>
+      <tr><th>Images Directory</th><td><code>{{ result.images_dir }}</code></td></tr>
+      <tr><th>COCO JSON</th><td><code>{{ result.coco_json_path }}</code></td></tr>
+      <tr><th>Image Count</th><td>{{ result.image_count }}</td></tr>
+      <tr><th>Annotation Count</th><td>{{ result.annotation_count }}</td></tr>
+      <tr><th>Seeded Mask Files</th><td>{{ seeded_mask_files }}</td></tr>
+      {% if draft_dataset %}
+        <tr>
+          <th>Draft Dataset</th>
+          <td>
+            <a href="{{ url_for('main.workspace_dataset_detail', workspace_id=workspace.id, dataset_id=draft_dataset.id) }}">
+              {{ draft_dataset.name }}
+            </a>
+            (id={{ draft_dataset.id }})
+          </td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Recipe Summary</h2>
+  {% if result.step_summaries %}
+    <table>
+      <thead>
+        <tr>
+          <th>Step</th>
+          <th>Transform</th>
+          <th>Mode</th>
+          <th>Percent</th>
+          <th>Selected</th>
+          <th>Generated</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for step in result.step_summaries %}
+          <tr>
+            <td>{{ step.step }}</td>
+            <td>{{ step.transform }}</td>
+            <td>{{ step.selection_mode }}</td>
+            <td>{{ step.selection_percent }}%</td>
+            <td>{{ step.selected_count }}</td>
+            <td>{{ step.generated_count }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No recipe steps were run. Output only includes original images.</p>
+  {% endif %}
+  <h3>Generated Counts</h3>
+  <pre>{{ result.transform_counts | prettyjson }}</pre>
+</section>
+
+{% if logs %}
+<section class="panel">
+  <h2>Log</h2>
+  <ul class="log-list">
+    {% for line in logs %}
+      <li>{{ line }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if seed_warnings %}
+<section class="panel">
+  <h2>Mask Seed Warnings</h2>
+  <ul class="log-list">
+    {% for warning in seed_warnings %}
+      <li>{{ warning }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if result.warnings %}
+<section class="panel">
+  <h2>Warnings</h2>
+  <ul class="log-list">
+    {% for warning in result.warnings %}
+      <li>{{ warning }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<p>
+  <a href="{{ url_for('main.augment_new', workspace_id=workspace.id) }}">Run another augmentation</a>
+  |
+  <a href="{{ url_for('main.workspace_dashboard', workspace_id=workspace.id) }}">Back to dashboard</a>
+</p>
+{% endblock %}

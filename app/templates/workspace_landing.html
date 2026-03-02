@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Workspaces - {{ app_name }}{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Workspaces</h2>
+  <p class="muted">Select an existing workspace or create a new one to get started.</p>
+
+  {% if workspace_rows %}
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Created</th>
+          <th>Updated</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ws in workspace_rows %}
+          <tr>
+            <td>{{ ws.name }}</td>
+            <td>{{ ws.created_at }}</td>
+            <td>{{ ws.updated_at }}</td>
+            <td><a class="primary-btn" href="{{ url_for('main.workspace_dashboard', workspace_id=ws.id) }}">Open</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="empty-state">
+      <h3>No workspaces available</h3>
+      <p>Create your first workspace below.</p>
+    </div>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Create Workspace</h2>
+  <form action="{{ url_for('labeler.create_workspace') }}" method="post" class="grid-form" enctype="multipart/form-data">
+    <input type="hidden" name="return_to" value="dashboard">
+    <label>
+      Workspace Name
+      <input type="text" name="name" required placeholder="experiment_workspace_a">
+    </label>
+    <label>
+      Upload Initial Images (optional)
+      <input type="file" name="image_files" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff" multiple>
+    </label>
+    <div class="form-actions">
+      <button type="submit">Create Workspace</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

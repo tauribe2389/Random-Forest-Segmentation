@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% block title %}Images - {{ workspace.name }}{% endblock %}
+{% block content %}
+<section class="panel images-page-head" id="images-page-root" data-workspace-id="{{ workspace.id }}">
+  <div class="images-head-row">
+    <div>
+      <h2>Workspace Images</h2>
+      <p class="muted">Manage the workspace image library used to create datasets.</p>
+    </div>
+    <div class="images-head-actions">
+      <button type="button" class="primary-btn" data-open-upload>Upload Images</button>
+    </div>
+  </div>
+</section>
+
+<section class="panel images-upload-panel" id="upload">
+  <div class="accordion-panel images-upload-static" id="images-upload-accordion">
+    <div class="accordion-body">
+      <h3 class="images-upload-title">Upload Images</h3>
+      <p class="muted">Drag and drop files, select files directly, or choose a folder.</p>
+      <form method="post" action="{{ url_for('labeler.upload_images', workspace_id=workspace.id) }}" class="grid-form" enctype="multipart/form-data" id="images-upload-form">
+        <input type="hidden" name="return_to" value="images">
+        <div class="images-dropzone" id="images-dropzone" tabindex="0" role="button" aria-label="Drop images here or click to select image files">
+          <strong>Drop images here</strong>
+          <span>or click to select files</span>
+          <span class="hint">Accepted: .png, .jpg, .jpeg, .bmp, .tif, .tiff</span>
+        </div>
+        <label class="images-upload-field">
+          Image Files
+          <input id="images-file-input" type="file" name="image_files" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff" multiple>
+        </label>
+        <div class="images-upload-actions">
+          <button type="button" class="secondary" id="images-folder-btn">Choose Folder</button>
+          <input id="images-folder-input" type="file" name="folder_files" webkitdirectory directory multiple hidden>
+          <span class="hint" id="images-upload-selection">No files selected yet.</span>
+        </div>
+        <div class="form-actions">
+          <button type="submit">Upload to "{{ workspace.name }}"</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</section>
+
+<section class="panel images-library-panel">
+  <div class="images-toolbar">
+    <label class="images-toolbar-item">
+      Search
+      <input type="text" id="images-search" placeholder="Find by filename" {% if not image_cards %}disabled{% endif %}>
+    </label>
+    <label class="images-toolbar-item">
+      File Type
+      <select id="images-ext-filter" {% if not image_cards %}disabled{% endif %}>
+        <option value="">All file types</option>
+      </select>
+    </label>
+    <label class="images-toolbar-item">
+      Sort
+      <select id="images-sort" {% if not image_cards %}disabled{% endif %}>
+        <option value="modified_desc">Newest first</option>
+        <option value="modified_asc">Oldest first</option>
+        <option value="name_asc">Name A-Z</option>
+        <option value="name_desc">Name Z-A</option>
+        <option value="size_desc">Largest first</option>
+        <option value="size_asc">Smallest first</option>
+      </select>
+    </label>
+    <div class="images-toolbar-actions">
+      <button type="button" class="secondary" id="images-clear-filters" {% if not image_cards %}disabled{% endif %}>Reset</button>
+      <span class="selection-count-pill" id="images-visible-pill">{{ image_count }} / {{ image_count }} shown</span>
+    </div>
+  </div>
+
+  {% if image_cards %}
+    <div class="collection-thumb-grid images-grid" id="images-grid">
+      {% for card in image_cards %}
+        <article
+          class="collection-thumb-card image-lib-card"
+          data-name="{{ card.image_name|lower }}"
+          data-image-name="{{ card.image_name }}"
+          data-extension="{{ card.image_extension }}"
+          data-size="{{ card.image_size_bytes }}"
+          data-modified="{{ card.modified_epoch }}"
+          data-modified-label="{{ card.modified_at|human_datetime }}"
+          data-image-url="{{ url_for('labeler.api_image', workspace_id=workspace.id, image_name=card.image_name) }}"
+        >
+          <button type="button" class="image-thumb-link" data-inspect-image>
+            <div class="image-thumb-frame">
+              <div class="image-thumb-skeleton"></div>
+              <img
+                class="collection-thumb-image image-lib-thumb"
+                src="{{ url_for('labeler.api_thumbnail', workspace_id=workspace.id, image_name=card.image_name) }}"
+                alt="{{ card.image_name }}"
+                loading="lazy"
+                decoding="async"
+              >
+              <span class="image-thumb-error" hidden>Preview unavailable</span>
+            </div>
+          </button>
+          <div class="collection-thumb-meta">
+            <code title="{{ card.image_name }}">{{ card.image_name }}</code>
+            <div class="image-meta-line" data-image-meta>Loading dimensions...</div>
+            <div class="image-meta-secondary">
+              <span>{{ card.image_size_bytes }}</span>
+              <span>•</span>
+              <time datetime="{{ card.modified_at }}" title="{{ card.modified_at }}">{{ card.modified_at|human_datetime }}</time>
+            </div>
+            <div class="image-card-actions">
+              <button type="button" class="table-action-btn secondary" data-inspect-image>
+                <span class="table-action-icon">i</span>
+                <span>Inspect</span>
+              </button>
+            </div>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+    <div class="images-load-more">
+      <button type="button" class="secondary" id="images-load-more-btn">Load More</button>
+      <span class="hint" id="images-load-more-note"></span>
+      <div id="images-load-sentinel" aria-hidden="true"></div>
+    </div>
+  {% else %}
+    <div class="empty-state">
+      <h3>No images in this workspace yet</h3>
+      <p class="muted">Upload files to start labeling and dataset creation.</p>
+      <button type="button" class="primary-btn" data-open-upload>Upload Images</button>
+    </div>
+  {% endif %}
+</section>
+<section id="images-inspect-modal" class="modal-backdrop images-inspect-modal" hidden aria-hidden="true">
+  <div class="modal-card images-inspect-card" role="dialog" aria-modal="true" aria-labelledby="images-inspect-title">
+    <div class="modal-head">
+      <h3 id="images-inspect-title">Inspect Image</h3>
+      <button id="images-inspect-close" type="button" class="secondary">Close</button>
+    </div>
+    <div class="images-inspect-toolbar">
+      <div class="images-inspect-zoom-controls">
+        <button id="images-zoom-out" type="button" class="secondary" aria-label="Zoom out">-</button>
+        <input id="images-zoom-range" type="range" min="20" max="800" step="5" value="100" aria-label="Zoom level">
+        <button id="images-zoom-in" type="button" class="secondary" aria-label="Zoom in">+</button>
+        <button id="images-zoom-fit" type="button" class="secondary">Fit</button>
+        <button id="images-zoom-actual" type="button" class="secondary">100%</button>
+      </div>
+      <div class="images-inspect-zoom-readout">
+        <strong id="images-zoom-label">100%</strong>
+      </div>
+    </div>
+    <div class="images-inspect-body">
+      <div class="images-inspect-preview-wrap" id="images-inspect-preview-wrap">
+        <div class="images-inspect-canvas">
+          <img id="images-inspect-preview" class="images-inspect-preview" alt="" loading="lazy" decoding="async">
+        </div>
+      </div>
+      <div class="images-inspect-meta">
+        <div class="images-inspect-meta-row">
+          <span class="muted">Filename</span>
+          <code id="images-inspect-name"></code>
+        </div>
+        <div class="images-inspect-meta-row">
+          <span class="muted">Dimensions</span>
+          <span id="images-inspect-dimensions">-</span>
+        </div>
+        <div class="images-inspect-meta-row">
+          <span class="muted">File Size</span>
+          <span id="images-inspect-size">-</span>
+        </div>
+        <div class="images-inspect-meta-row">
+          <span class="muted">Type</span>
+          <span id="images-inspect-type">-</span>
+        </div>
+        <div class="images-inspect-meta-row">
+          <span class="muted">Last Updated</span>
+          <span id="images-inspect-modified">-</span>
+        </div>
+        <p class="hint">Tip: use mouse wheel + Ctrl/Cmd, +/- keys, or slider to zoom.</p>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button id="images-inspect-dismiss" type="button" class="secondary">Close</button>
+    </div>
+  </div>
+</section>
+<script src="{{ url_for('static', filename='images_page.js') }}"></script>
+{% endblock %}

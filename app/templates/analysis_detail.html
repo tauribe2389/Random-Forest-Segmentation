@@ -1,13 +1,29 @@
 {% extends "base.html" %}
 {% block title %}Analysis Run {{ run.id }}{% endblock %}
 {% block content %}
-<section class="panel">
-  <h2>Analysis Run #{{ run.id }}</h2>
+<section class="panel analysis-detail-page">
+  <div class="dataset-card-top">
+    <div>
+      <h2>Analysis Run #{{ run.id }}</h2>
+      <p class="muted">Model: {{ run.model_name }} (id={{ run.model_id }})</p>
+    </div>
+    <div class="btn-row">
+      <a class="link-btn" href="{{ url_for('main.workspace_analysis', workspace_id=workspace.id) }}">Back to Analysis Runs</a>
+      <a class="link-btn" href="{{ url_for('main.promote_analysis_run', workspace_id=workspace.id, run_id=run.id) }}">Promote to Draft Dataset</a>
+      <a class="link-btn" href="{{ url_for('main.new_analysis', workspace_id=workspace.id, model_id=run.model_id) }}">Run Again</a>
+    </div>
+  </div>
+  <div class="analysis-detail-meta">
+    <span class="badge model-status-badge model-status-{{ run.status|lower }}">{{ run.status }}</span>
+    {% if run_postprocess_enabled %}
+      <span class="badge">Refined enabled</span>
+    {% else %}
+      <span class="badge subtle">Raw only</span>
+    {% endif %}
+  </div>
   <table>
     <tbody>
-      <tr><th>Created</th><td>{{ run.created_at }}</td></tr>
-      <tr><th>Status</th><td>{{ run.status }}</td></tr>
-      <tr><th>Model</th><td>{{ run.model_name }} (id={{ run.model_id }})</td></tr>
+      <tr><th>Created</th><td>{{ run.created_at | human_datetime }}</td></tr>
       <tr><th>Images requested</th><td>{{ run.num_images }}</td></tr>
       <tr><th>Output dir</th><td><code>{{ run.output_dir }}</code></td></tr>
       {% if run.error_message %}
@@ -17,63 +33,334 @@
   </table>
 </section>
 
-<section class="panel">
-  <h2>Run Summary</h2>
-  <pre>{{ run.summary_json | prettyjson }}</pre>
-</section>
+{% if run_postprocess_enabled and run_flip_stats %}
+  <section class="panel">
+    <h2>Raw vs Refined Summary</h2>
+    <div class="analysis-stats-grid">
+      <article class="analysis-stat-card">
+        <h3>Overall Flip Rate</h3>
+        <p>{{ "%.2f"|format((run_flip_stats.get("flip_rate", 0.0) * 100.0)) }}%</p>
+      </article>
+      <article class="analysis-stat-card">
+        <h3>Pixels Changed</h3>
+        <p>{{ run_flip_stats.get("flip_pixels", 0) }} / {{ run_flip_stats.get("total_pixels", 0) }}</p>
+      </article>
+      <article class="analysis-stat-card">
+        <h3>Top Area % Changes</h3>
+        {% if run_top_area_changes %}
+          <ul class="analysis-top-change-list">
+            {% for row in run_top_area_changes %}
+              <li>
+                <strong>{{ row.class_name }}</strong>:
+                {{ "%.3f"|format(row.delta_percent) }}%
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p>No area changes recorded.</p>
+        {% endif %}
+      </article>
+    </div>
+    {% if run_area_rows %}
+      <table class="analysis-area-table">
+        <thead>
+          <tr>
+            <th>Class</th>
+            <th>Raw Area %</th>
+            <th>Refined Area %</th>
+            <th>Delta %</th>
+            <th>Raw Pixels</th>
+            <th>Refined Pixels</th>
+            <th>Delta Pixels</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in run_area_rows %}
+            <tr>
+              <td>{{ row.class_name }}</td>
+              <td>{{ "%.3f"|format(row.raw_percent) }}</td>
+              <td>{{ "%.3f"|format(row.refined_percent) }}</td>
+              <td>{{ "%.3f"|format(row.delta_percent) }}</td>
+              <td>{{ row.raw_pixels }}</td>
+              <td>{{ row.refined_pixels }}</td>
+              <td>{{ row.delta_pixels }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </section>
+{% endif %}
 
 <section class="panel">
   <h2>Per-Image Results</h2>
   {% if items %}
-    <table>
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Input Image</th>
-          <th>Overlay Preview</th>
-          <th>Files</th>
-          <th>Summary</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in items %}
-          <tr>
-            <td>{{ loop.index }}</td>
-            <td><code>{{ item.input_image }}</code></td>
-            <td>
-              {% set overlay_link = file_url(item.overlay_path) %}
-              {% if overlay_link %}
-                <a href="{{ overlay_link }}" target="_blank">
-                  <img src="{{ overlay_link }}" alt="overlay {{ loop.index }}" class="thumb">
-                </a>
+    <div class="analysis-item-grid">
+      {% for item in items %}
+        {% set input_link = file_url(item.input_image) %}
+        {% set raw_overlay_link = file_url(item.raw_overlay_path or item.overlay_path) %}
+        {% set raw_mask_link = file_url(item.raw_mask_path or item.mask_path) %}
+        {% set raw_conf_link = file_url(item.conf_path) %}
+        {% set refined_overlay_link = file_url(item.refined_overlay_path) %}
+        {% set refined_mask_link = file_url(item.refined_mask_path) %}
+        {% set postprocess_item = item.postprocess_applied %}
+        <article class="analysis-item-card" data-analysis-card>
+          <div class="analysis-item-head">
+            <h3>{{ loop.index }}. {{ item.input_image_name }}</h3>
+            <div class="analysis-item-head-badges">
+              {% if postprocess_item %}
+                <span class="badge">Refined</span>
               {% else %}
-                N/A
+                <span class="badge subtle">Raw only</span>
               {% endif %}
-            </td>
-            <td>
-              {% set mask_link = file_url(item.mask_path) %}
-              {% if overlay_link %}
-                <a href="{{ overlay_link }}" target="_blank">Overlay</a>
+            </div>
+          </div>
+          <p class="analysis-item-path"><code>{{ item.input_image }}</code></p>
+
+          {% if postprocess_item %}
+            <div class="analysis-view-controls" role="group" aria-label="Comparison display mode">
+              <button type="button" class="link-btn analysis-view-btn is-active" data-mode="overlay">Overlay</button>
+              <button type="button" class="link-btn analysis-view-btn" data-mode="mask">Mask only</button>
+              <button type="button" class="link-btn analysis-view-btn" data-mode="boundaries">Boundaries</button>
+            </div>
+            <div class="analysis-compare-grid">
+              <section class="analysis-compare-panel">
+                <h4>Raw (RF)</h4>
+                {% if raw_overlay_link or raw_mask_link %}
+                  <a href="{{ raw_overlay_link or raw_mask_link }}" target="_blank" rel="noopener">
+                    <img
+                      class="analysis-compare-image"
+                      src="{{ raw_overlay_link or raw_mask_link }}"
+                      alt="Raw output for {{ item.input_image_name }}"
+                      data-overlay-src="{{ raw_overlay_link or '' }}"
+                      data-mask-src="{{ raw_mask_link or '' }}"
+                      data-input-src="{{ input_link or '' }}"
+                      data-boundary-src=""
+                    >
+                  </a>
+                {% else %}
+                  <p class="muted">Raw preview unavailable.</p>
+                {% endif %}
+                <p class="analysis-file-links">
+                  {% if raw_overlay_link %}<a href="{{ raw_overlay_link }}" target="_blank" rel="noopener">Raw overlay</a>{% endif %}
+                  {% if raw_mask_link %}{% if raw_overlay_link %} | {% endif %}<a href="{{ raw_mask_link }}" target="_blank" rel="noopener">Raw mask</a>{% endif %}
+                  {% if raw_conf_link %}{% if raw_overlay_link or raw_mask_link %} | {% endif %}<a href="{{ raw_conf_link }}" target="_blank" rel="noopener">Raw confidence</a>{% endif %}
+                </p>
+              </section>
+              <section class="analysis-compare-panel">
+                <h4>Refined (graph smoothed)</h4>
+                {% if refined_overlay_link or refined_mask_link %}
+                  <a href="{{ refined_overlay_link or refined_mask_link }}" target="_blank" rel="noopener">
+                    <img
+                      class="analysis-compare-image"
+                      src="{{ refined_overlay_link or refined_mask_link }}"
+                      alt="Refined output for {{ item.input_image_name }}"
+                      data-overlay-src="{{ refined_overlay_link or '' }}"
+                      data-mask-src="{{ refined_mask_link or '' }}"
+                      data-input-src="{{ input_link or '' }}"
+                      data-boundary-src=""
+                    >
+                  </a>
+                {% else %}
+                  <p class="muted">Refined preview unavailable.</p>
+                {% endif %}
+                <p class="analysis-file-links">
+                  {% if refined_overlay_link %}<a href="{{ refined_overlay_link }}" target="_blank" rel="noopener">Refined overlay</a>{% endif %}
+                  {% if refined_mask_link %}{% if refined_overlay_link %} | {% endif %}<a href="{{ refined_mask_link }}" target="_blank" rel="noopener">Refined mask</a>{% endif %}
+                </p>
+              </section>
+            </div>
+            <div class="analysis-item-stats">
+              <span><strong>Flip rate:</strong> {{ "%.2f"|format(item.flip_rate_percent or 0.0) }}%</span>
+              {% if item.top_area_changes %}
+                <span>
+                  <strong>Top class deltas:</strong>
+                  {% for row in item.top_area_changes %}
+                    {{ row.class_name }} ({{ "%.2f"|format(row.delta_percent) }}%){% if not loop.last %}, {% endif %}
+                  {% endfor %}
+                </span>
               {% endif %}
-              {% if mask_link %}
-                {% if overlay_link %}|{% endif %}
-                <a href="{{ mask_link }}" target="_blank">Mask</a>
-              {% endif %}
-            </td>
-            <td><pre>{{ item.summary_json | prettyjson }}</pre></td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+            </div>
+          {% else %}
+            <div class="analysis-single-grid">
+              <section class="analysis-compare-panel">
+                <h4>Raw (RF)</h4>
+                {% if raw_overlay_link %}
+                  <a href="{{ raw_overlay_link }}" target="_blank" rel="noopener">
+                    <img class="analysis-compare-image" src="{{ raw_overlay_link }}" alt="Raw output for {{ item.input_image_name }}">
+                  </a>
+                {% else %}
+                  <p class="muted">Raw preview unavailable.</p>
+                {% endif %}
+                <p class="analysis-file-links">
+                  {% if raw_overlay_link %}<a href="{{ raw_overlay_link }}" target="_blank" rel="noopener">Overlay</a>{% endif %}
+                  {% if raw_mask_link %}{% if raw_overlay_link %} | {% endif %}<a href="{{ raw_mask_link }}" target="_blank" rel="noopener">Mask</a>{% endif %}
+                  {% if raw_conf_link %}{% if raw_overlay_link or raw_mask_link %} | {% endif %}<a href="{{ raw_conf_link }}" target="_blank" rel="noopener">Confidence</a>{% endif %}
+                </p>
+              </section>
+            </div>
+          {% endif %}
+
+          <details class="disclosure">
+            <summary>Summary JSON</summary>
+            <pre>{{ item.summary_json | prettyjson }}</pre>
+          </details>
+        </article>
+      {% endfor %}
+    </div>
   {% else %}
     <p>No per-image outputs saved.</p>
   {% endif %}
 </section>
 
-<p>
-  <a href="{{ url_for('main.new_analysis', model_id=run.model_id) }}">Run another analysis</a>
-  |
-  <a href="{{ url_for('main.dashboard') }}">Back to dashboard</a>
-</p>
-{% endblock %}
+<section class="panel">
+  <h2>Run Summary JSON</h2>
+  <pre>{{ run.summary_json | prettyjson }}</pre>
+</section>
 
+<script>
+  (function () {
+    var cards = Array.prototype.slice.call(document.querySelectorAll("[data-analysis-card]"));
+    if (!cards.length) {
+      return;
+    }
+
+    var imageCache = new Map();
+
+    function loadImage(src) {
+      return new Promise(function (resolve, reject) {
+        if (!src) {
+          reject(new Error("Missing image source"));
+          return;
+        }
+        if (imageCache.has(src)) {
+          resolve(imageCache.get(src));
+          return;
+        }
+        var img = new Image();
+        img.onload = function () {
+          imageCache.set(src, img);
+          resolve(img);
+        };
+        img.onerror = function () {
+          reject(new Error("Failed to load image: " + src));
+        };
+        img.src = src;
+      });
+    }
+
+    async function buildBoundaryOverlay(inputSrc, maskSrc) {
+      var loaded = await Promise.all([loadImage(inputSrc), loadImage(maskSrc)]);
+      var inputImage = loaded[0];
+      var maskImage = loaded[1];
+      var width = inputImage.naturalWidth || inputImage.width;
+      var height = inputImage.naturalHeight || inputImage.height;
+      if (!width || !height) {
+        throw new Error("Image dimensions unavailable");
+      }
+
+      var displayCanvas = document.createElement("canvas");
+      displayCanvas.width = width;
+      displayCanvas.height = height;
+      var displayCtx = displayCanvas.getContext("2d");
+      if (!displayCtx) {
+        throw new Error("Canvas context unavailable");
+      }
+      displayCtx.drawImage(inputImage, 0, 0, width, height);
+
+      var maskCanvas = document.createElement("canvas");
+      maskCanvas.width = width;
+      maskCanvas.height = height;
+      var maskCtx = maskCanvas.getContext("2d");
+      if (!maskCtx) {
+        throw new Error("Mask canvas context unavailable");
+      }
+      maskCtx.drawImage(maskImage, 0, 0, width, height);
+
+      var maskImageData = maskCtx.getImageData(0, 0, width, height).data;
+      var outputImageData = displayCtx.getImageData(0, 0, width, height);
+      var output = outputImageData.data;
+
+      for (var y = 0; y < height - 1; y += 1) {
+        for (var x = 0; x < width - 1; x += 1) {
+          var idx = (y * width + x) * 4;
+          var rightIdx = (y * width + (x + 1)) * 4;
+          var downIdx = ((y + 1) * width + x) * 4;
+          var current = maskImageData[idx];
+          var right = maskImageData[rightIdx];
+          var down = maskImageData[downIdx];
+          if (current !== right || current !== down) {
+            output[idx] = 255;
+            output[idx + 1] = 214;
+            output[idx + 2] = 10;
+            output[idx + 3] = 255;
+          }
+        }
+      }
+      displayCtx.putImageData(outputImageData, 0, 0);
+      return displayCanvas.toDataURL("image/png");
+    }
+
+    async function setPreviewMode(img, mode) {
+      if (!img) {
+        return;
+      }
+      var overlaySrc = img.getAttribute("data-overlay-src") || "";
+      var maskSrc = img.getAttribute("data-mask-src") || "";
+      var inputSrc = img.getAttribute("data-input-src") || "";
+      if (mode === "overlay") {
+        img.src = overlaySrc || maskSrc || inputSrc || img.src;
+        return;
+      }
+      if (mode === "mask") {
+        img.src = maskSrc || overlaySrc || inputSrc || img.src;
+        return;
+      }
+      if (mode === "boundaries") {
+        var cachedBoundary = img.getAttribute("data-boundary-src");
+        if (cachedBoundary) {
+          img.src = cachedBoundary;
+          return;
+        }
+        if (!inputSrc || !maskSrc) {
+          img.src = overlaySrc || maskSrc || inputSrc || img.src;
+          return;
+        }
+        try {
+          var boundarySrc = await buildBoundaryOverlay(inputSrc, maskSrc);
+          img.setAttribute("data-boundary-src", boundarySrc);
+          img.src = boundarySrc;
+        } catch (error) {
+          img.src = overlaySrc || maskSrc || inputSrc || img.src;
+        }
+      }
+    }
+
+    cards.forEach(function (card) {
+      var buttons = Array.prototype.slice.call(card.querySelectorAll(".analysis-view-btn"));
+      var previews = Array.prototype.slice.call(card.querySelectorAll(".analysis-compare-image"));
+      if (!buttons.length || !previews.length) {
+        return;
+      }
+
+      function applyMode(mode) {
+        buttons.forEach(function (btn) {
+          btn.classList.toggle("is-active", btn.getAttribute("data-mode") === mode);
+        });
+        previews.forEach(function (img) {
+          setPreviewMode(img, mode);
+        });
+      }
+
+      buttons.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var mode = btn.getAttribute("data-mode") || "overlay";
+          applyMode(mode);
+        });
+      });
+
+      applyMode("overlay");
+    });
+  })();
+</script>
+{% endblock %}

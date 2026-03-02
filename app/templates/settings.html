@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Settings - {{ workspace.name }}{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Workspace Settings</h2>
+  <table>
+    <tbody>
+      <tr><th>Name</th><td>{{ workspace.name }}</td></tr>
+      <tr><th>ID</th><td>{{ workspace.id }}</td></tr>
+      <tr><th>Root</th><td><code>{{ workspace.project_dir }}</code></td></tr>
+      <tr><th>Raw Images</th><td><code>{{ workspace.images_dir }}</code></td></tr>
+      <tr><th>Masks</th><td><code>{{ workspace.masks_dir }}</code></td></tr>
+      <tr><th>COCO Export</th><td><code>{{ workspace.coco_dir }}</code></td></tr>
+      <tr><th>Cache</th><td><code>{{ workspace.cache_dir }}</code></td></tr>
+      <tr><th>Augmentation Seed</th><td>{{ effective_augmentation_seed }}</td></tr>
+      <tr><th>Created</th><td>{{ workspace.created_at }}</td></tr>
+      <tr><th>Updated</th><td>{{ workspace.updated_at }}</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Augmentation Settings</h2>
+  <p class="muted">Used for deterministic random step selection and randomized augmentation settings.</p>
+  <form method="post" class="grid-form">
+    <label>
+      Workspace Augmentation Seed
+      <input type="number" name="augmentation_seed" value="{{ effective_augmentation_seed }}" step="1" required>
+    </label>
+    <div class="form-actions">
+      <button type="submit">Save Augmentation Seed</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

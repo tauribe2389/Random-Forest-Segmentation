@@ -1,4 +1,4 @@
-"""Helpers for parsing COCO annotations and rasterizing polygons."""
+"""Helpers for parsing COCO annotations and rasterizing polygons/RLE."""
 
 from __future__ import annotations
 
@@ -9,6 +9,11 @@ from typing import Any
 
 import numpy as np
 from skimage.draw import polygon as sk_polygon
+
+try:
+    from pycocotools import mask as mask_utils
+except ModuleNotFoundError:  # pragma: no cover - guarded at runtime by warnings
+    mask_utils = None
 
 
 def compute_sha256(file_path: Path) -> str:
@@ -106,36 +111,92 @@ def _polygon_area(flat_points: list[float]) -> float:
     return abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))) * 0.5
 
 
+def _decode_rle_mask(segmentation: Any, height: int, width: int) -> np.ndarray:
+    if mask_utils is None:
+        raise ModuleNotFoundError("pycocotools")
+    if not isinstance(segmentation, dict):
+        raise ValueError("RLE segmentation must be a dict.")
+
+    normalized = dict(segmentation)
+    counts = normalized.get("counts")
+    if isinstance(counts, str):
+        normalized["counts"] = counts.encode("utf-8")
+        counts = normalized["counts"]
+
+    if isinstance(counts, list):
+        rle = mask_utils.frPyObjects(normalized, height, width)
+    else:
+        rle = normalized
+
+    decoded = mask_utils.decode(rle)
+    if decoded.ndim == 3:
+        decoded = np.any(decoded, axis=2)
+    return decoded.astype(bool)
+
+
 def build_mask(
     height: int,
     width: int,
     annotations: list[dict[str, Any]],
     category_to_class: dict[int, int],
     overlap_policy: str = "higher_area_wins",
-) -> tuple[np.ndarray, list[str], int]:
-    """Rasterize annotation polygons into a class-index mask.
+    use_rle: bool = True,
+) -> tuple[np.ndarray, list[str], int, int]:
+    """Rasterize annotation polygons and RLE into a class-index mask.
 
     Returns:
         mask: (H, W) uint16 array where 0 is background.
         warnings: warning text generated during parsing.
         skipped_rle: number of RLE annotations skipped.
+        used_rle: number of RLE annotations decoded and applied.
     """
     mask = np.zeros((height, width), dtype=np.uint16)
     warnings: list[str] = []
     skipped_rle = 0
+    used_rle = 0
 
-    valid_entries: list[tuple[int, float, dict[str, Any], list[list[float]]]] = []
+    valid_entries: list[tuple[int, float, int, list[list[float]], np.ndarray | None, int | None]] = []
     for order_idx, annotation in enumerate(annotations):
         category_id = int(annotation.get("category_id", -1))
         if category_id not in category_to_class:
             continue
+        class_index = category_to_class[category_id]
 
         segmentation = annotation.get("segmentation")
         if isinstance(segmentation, dict):
-            skipped_rle += 1
-            warnings.append(
-                f"Skipped RLE annotation id={annotation.get('id')} (polygon-only MVP)."
+            if not use_rle:
+                skipped_rle += 1
+                continue
+            try:
+                rle_mask = _decode_rle_mask(segmentation, height, width)
+            except ModuleNotFoundError:
+                skipped_rle += 1
+                warnings.append(
+                    "Skipped RLE annotation because pycocotools is not installed."
+                )
+                continue
+            except Exception as exc:
+                skipped_rle += 1
+                warnings.append(
+                    f"Skipped invalid RLE annotation id={annotation.get('id')}: {exc}"
+                )
+                continue
+            if not rle_mask.any():
+                continue
+            area = float(annotation.get("area", 0.0))
+            if area <= 0:
+                area = float(rle_mask.sum())
+            valid_entries.append(
+                (
+                    order_idx,
+                    area,
+                    class_index,
+                    [],
+                    rle_mask,
+                    int(annotation.get("id")) if annotation.get("id") is not None else None,
+                )
             )
+            used_rle += 1
             continue
 
         polygons = _segmentation_to_polygons(segmentation)
@@ -146,7 +207,16 @@ def build_mask(
         if area <= 0:
             area = sum(_polygon_area(poly) for poly in polygons)
 
-        valid_entries.append((order_idx, area, annotation, polygons))
+        valid_entries.append(
+            (
+                order_idx,
+                area,
+                class_index,
+                polygons,
+                None,
+                int(annotation.get("id")) if annotation.get("id") is not None else None,
+            )
+        )
 
     if overlap_policy == "higher_area_wins":
         valid_entries.sort(key=lambda row: (row[1], row[0]))
@@ -155,14 +225,17 @@ def build_mask(
     else:
         raise ValueError(f"Unsupported overlap policy: {overlap_policy}")
 
-    for _, _, annotation, polygons in valid_entries:
-        class_index = category_to_class[int(annotation["category_id"])]
+    for _, _, class_index, polygons, rle_mask, annotation_id in valid_entries:
+        if rle_mask is not None:
+            mask[rle_mask] = class_index
+            continue
+
         for poly_points in polygons:
             try:
                 coords = np.asarray(poly_points, dtype=np.float64).reshape(-1, 2)
             except ValueError:
                 warnings.append(
-                    f"Invalid polygon for annotation id={annotation.get('id')}; skipped."
+                    f"Invalid polygon for annotation id={annotation_id}; skipped."
                 )
                 continue
             if coords.shape[0] < 3:
@@ -171,5 +244,4 @@ def build_mask(
             rr, cc = sk_polygon(coords[:, 1], coords[:, 0], shape=(height, width))
             mask[rr, cc] = class_index
 
-    return mask, warnings, skipped_rle
-
+    return mask, warnings, skipped_rle, used_rle

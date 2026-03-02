@@ -1,67 +1,465 @@
 {% extends "base.html" %}
 {% block title %}Model {{ model.id }} Details{% endblock %}
 {% block content %}
-<section class="panel">
-  <h2>Model Details</h2>
-  <table>
-    <tbody>
-      <tr><th>ID</th><td>{{ model.id }}</td></tr>
-      <tr><th>Name</th><td>{{ model.name }}</td></tr>
-      <tr><th>Status</th><td>{{ model.status }}</td></tr>
-      <tr><th>Created</th><td>{{ model.created_at }}</td></tr>
-      <tr><th>Dataset</th><td>{{ model.dataset_name }} (id={{ model.dataset_id }})</td></tr>
-      <tr><th>Dataset Path</th><td><code>{{ model.dataset_path }}</code></td></tr>
-      <tr><th>Image Root</th><td><code>{{ model.dataset_image_root }}</code></td></tr>
-      <tr><th>COCO JSON</th><td><code>{{ model.dataset_coco_json_path }}</code></td></tr>
-      <tr><th>COCO Checksum</th><td><code>{{ model.dataset_coco_checksum }}</code></td></tr>
-      <tr><th>Artifact Dir</th><td><code>{{ model.artifact_dir }}</code></td></tr>
-      <tr><th>Model File</th><td><code>{{ model.model_path }}</code></td></tr>
-      <tr><th>Metadata File</th><td><code>{{ model.metadata_path }}</code></td></tr>
-    </tbody>
-  </table>
-</section>
+{% set status_text = model.status|string %}
+{% set status_key = status_text|lower|replace(" ", "-") %}
+<div id="model-detail-root" class="model-detail-page">
+  <section class="panel model-detail-header-card">
+    <div class="model-detail-header-main">
+      <h2>{{ model.name }}</h2>
+      <div class="model-detail-header-meta">
+        <span class="badge model-status-badge model-status-{{ status_key }}">{{ status_text }}</span>
+        <span>Created {{ model.created_at|human_datetime }}</span>
+        <span>
+          Dataset:
+          {% if dataset_detail_url %}
+            <a href="{{ dataset_detail_url }}">{{ model.dataset_name }} (id={{ model.dataset_id }})</a>
+          {% else %}
+            {{ model.dataset_name }} (id={{ model.dataset_id }})
+          {% endif %}
+        </span>
+      </div>
+    </div>
+    <div class="btn-row model-detail-header-actions">
+      <a class="primary-btn" href="{{ url_for('main.new_analysis', workspace_id=workspace.id, model_id=model.id) }}">Run analysis with this model</a>
+      <a class="table-action-btn secondary" href="{{ url_for('main.workspace_models', workspace_id=workspace.id) }}">Back to Models</a>
+    </div>
+  </section>
 
-<section class="panel">
-  <h2>Classes</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Class Index</th>
-        <th>Category ID</th>
-        <th>Name</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for item in model.classes_json %}
-        <tr>
-          <td>{{ item.class_index }}</td>
-          <td>{{ item.category_id }}</td>
-          <td>{{ item.name }}</td>
-        </tr>
+  <section class="panel model-detail-group">
+    <div class="model-detail-group-head">
+      <h2>Summary</h2>
+    </div>
+    <div class="model-summary-grid">
+      <article class="model-summary-card">
+        <h3>Model</h3>
+        <dl class="model-dl">
+          <div>
+            <dt>ID</dt>
+            <dd>{{ model.id }}</dd>
+          </div>
+          <div>
+            <dt>Name</dt>
+            <dd>{{ model.name }}</dd>
+          </div>
+          <div>
+            <dt>Status</dt>
+            <dd><span class="badge model-status-badge model-status-{{ status_key }}">{{ status_text }}</span></dd>
+          </div>
+          <div>
+            <dt>Created</dt>
+            <dd>{{ model.created_at|human_datetime }}</dd>
+          </div>
+        </dl>
+      </article>
+      <article class="model-summary-card">
+        <h3>Dataset</h3>
+        <dl class="model-dl">
+          <div>
+            <dt>Name</dt>
+            <dd>
+              {% if dataset_detail_url %}
+                <a href="{{ dataset_detail_url }}">{{ model.dataset_name }}</a>
+              {% else %}
+                {{ model.dataset_name }}
+              {% endif %}
+            </dd>
+          </div>
+          <div>
+            <dt>ID</dt>
+            <dd>{{ model.dataset_id }}</dd>
+          </div>
+          <div>
+            <dt>COCO Checksum</dt>
+            <dd><code>{{ model.dataset_coco_checksum }}</code></dd>
+          </div>
+        </dl>
+      </article>
+      <article class="model-summary-card">
+        <h3>Quick Links</h3>
+        <div class="btn-row">
+          <a class="table-action-btn secondary" href="{{ url_for('main.workspace_dashboard', workspace_id=workspace.id) }}">Back to Dashboard</a>
+          <a class="table-action-btn secondary" href="{{ url_for('main.workspace_models', workspace_id=workspace.id) }}">Models Library</a>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="panel model-detail-group">
+    <div class="model-detail-group-head">
+      <h2>Performance</h2>
+      <div class="model-detail-hints">
+        {% if has_incomplete_metrics %}
+          <span class="badge warn">Incomplete metrics</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="model-headline-metrics" aria-label="Headline metrics">
+      {% for metric in headline_metrics %}
+        <article class="model-metric-card">
+          <span class="metric-label">{{ metric.label }}</span>
+          <strong class="metric-value">{{ metric.display }}</strong>
+        </article>
       {% endfor %}
-    </tbody>
-  </table>
-</section>
+    </div>
 
-<section class="panel">
-  <h2>Feature Config</h2>
-  <pre>{{ model.feature_config_json | prettyjson }}</pre>
-</section>
+    <section class="model-detail-subsection">
+      <h3>Per-class IoU</h3>
+      {% if per_class_iou_rows %}
+        <div class="table-wrap">
+          <table class="model-detail-table" aria-label="Per-class IoU table">
+            <thead>
+              <tr>
+                <th>Class Name</th>
+                <th>IoU Value</th>
+                <th>Status Indicator</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in per_class_iou_rows %}
+                <tr>
+                  <td>{{ row.class_name }}</td>
+                  <td>{{ row.value_display }}</td>
+                  <td>
+                    {% if row.status == "incomplete" %}
+                      <span class="badge warn">incomplete</span>
+                    {% elif row.status == "zero" %}
+                      <span class="model-warning-dot" aria-label="Zero IoU warning"></span>
+                    {% else %}
+                      <span class="badge subtle">ok</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="empty-state model-empty-inline">
+          <p>No per-class IoU values available.</p>
+        </div>
+      {% endif %}
+    </section>
 
-<section class="panel">
-  <h2>Hyperparameters</h2>
-  <pre>{{ model.hyperparams_json | prettyjson }}</pre>
-</section>
+    <section class="model-detail-subsection">
+      <h3>Sampling Counts</h3>
+      {% if sampling_rows %}
+        <div class="table-wrap">
+          <table class="model-detail-table" aria-label="Sampling counts by class">
+            <thead>
+              <tr>
+                <th>Class Name</th>
+                <th>Train Sampled Pixels</th>
+                <th>Val Sampled Pixels</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in sampling_rows %}
+                <tr>
+                  <td>{{ row.class_name }}</td>
+                  <td>{{ row.train_display }}</td>
+                  <td>{{ row.validation_display }}</td>
+                  <td>
+                    {% if row.has_zero %}
+                      <span class="model-warning-dot" aria-label="Zero sampled-pixel warning"></span>
+                    {% else %}
+                      <span class="badge subtle">ok</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="empty-state model-empty-inline">
+          <p>No sampling counts available.</p>
+        </div>
+      {% endif %}
+    </section>
 
-<section class="panel">
-  <h2>Metrics Summary</h2>
-  <pre>{{ model.metrics_json | prettyjson }}</pre>
-</section>
+    <section class="model-detail-subsection">
+      <h3>Class Distribution Charts</h3>
+      <div class="model-chart-grid">
+        <article class="model-chart-card">
+          <h4>Train sampled pixels by class</h4>
+          {% if train_distribution_rows %}
+            <div class="model-bar-chart" aria-label="Train sampled pixels distribution">
+              {% for row in train_distribution_rows %}
+                <div class="model-bar-row">
+                  <span class="model-bar-label">{{ row.class_name }}</span>
+                  <div class="model-bar-track">
+                    <div class="model-bar-fill" style="width: {{ row.percent }}%;"></div>
+                  </div>
+                  <span class="model-bar-value">{{ row.count_display }}</span>
+                </div>
+              {% endfor %}
+            </div>
+            <div class="table-wrap model-chart-table-wrap">
+              <table class="model-detail-table" aria-label="Train sampled pixels text equivalent">
+                <thead>
+                  <tr>
+                    <th>Class</th>
+                    <th>Sampled Pixels</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in train_distribution_rows %}
+                    <tr>
+                      <td>{{ row.class_name }}</td>
+                      <td>{{ row.count_display }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <div class="empty-state model-empty-inline">
+              <p>No sampling distribution available.</p>
+            </div>
+          {% endif %}
+        </article>
 
-<p>
-  <a href="{{ url_for('main.new_analysis', model_id=model.id) }}">Run analysis with this model</a>
-  |
-  <a href="{{ url_for('main.dashboard') }}">Back to dashboard</a>
-</p>
+        <article class="model-chart-card">
+          <h4>Validation sampled pixels by class</h4>
+          {% if validation_distribution_rows %}
+            <div class="model-bar-chart" aria-label="Validation sampled pixels distribution">
+              {% for row in validation_distribution_rows %}
+                <div class="model-bar-row">
+                  <span class="model-bar-label">{{ row.class_name }}</span>
+                  <div class="model-bar-track">
+                    <div class="model-bar-fill val" style="width: {{ row.percent }}%;"></div>
+                  </div>
+                  <span class="model-bar-value">{{ row.count_display }}</span>
+                </div>
+              {% endfor %}
+            </div>
+            <div class="table-wrap model-chart-table-wrap">
+              <table class="model-detail-table" aria-label="Validation sampled pixels text equivalent">
+                <thead>
+                  <tr>
+                    <th>Class</th>
+                    <th>Sampled Pixels</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in validation_distribution_rows %}
+                    <tr>
+                      <td>{{ row.class_name }}</td>
+                      <td>{{ row.count_display }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <div class="empty-state model-empty-inline">
+              <p>No sampling distribution available.</p>
+            </div>
+          {% endif %}
+        </article>
+      </div>
+    </section>
+
+    <section class="model-detail-subsection">
+      <h3>Confusion Matrix</h3>
+      {% if confusion_matrix %}
+        <div class="model-cm-controls">
+          <label>
+            <input id="confusion-normalize-toggle" type="checkbox">
+            Normalize rows
+          </label>
+        </div>
+        <div class="table-wrap">
+          <table id="confusion-matrix-table" class="model-detail-table model-confusion-table" aria-label="Confusion matrix">
+            <thead>
+              <tr>
+                <th>True \ Pred</th>
+                {% for label in confusion_matrix.labels %}
+                  <th>{{ label }}</th>
+                {% endfor %}
+                <th>Row Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in confusion_matrix.rows %}
+                <tr>
+                  <th>{{ row.true_label }}</th>
+                  {% for cell in row.cells %}
+                    <td
+                      class="heatmap-cell"
+                      data-cm-cell
+                      data-count="{{ cell.count_value }}"
+                      data-row-total="{{ cell.row_total }}"
+                      data-raw-intensity="{{ cell.raw_intensity }}"
+                      data-true-label="{{ row.true_label }}"
+                      data-pred-label="{{ confusion_matrix.labels[loop.index0] }}"
+                    >
+                      {{ cell.count_display }}
+                    </td>
+                  {% endfor %}
+                  <td>{{ row.row_total_display }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="empty-state model-empty-inline">
+          <h4>Confusion matrix not available</h4>
+          <p>Confusion matrix not available (not computed for this model).</p>
+        </div>
+      {% endif %}
+    </section>
+
+    <details class="disclosure">
+      <summary>Raw Metrics JSON</summary>
+      <pre>{{ metrics | prettyjson }}</pre>
+    </details>
+  </section>
+
+  <section class="panel model-detail-group">
+    <div class="model-detail-group-head">
+      <h2>Configuration & Artifacts</h2>
+    </div>
+
+    <section class="model-detail-subsection">
+      <h3>Classes</h3>
+      <div class="table-wrap">
+        <table class="model-detail-table" aria-label="Model classes">
+          <thead>
+            <tr>
+              <th>Class Index</th>
+              <th>Category ID</th>
+              <th>Name</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if model.classes_json %}
+              {% for item in model.classes_json %}
+                <tr>
+                  <td>{{ item.class_index }}</td>
+                  <td>{{ item.category_id }}</td>
+                  <td>{{ item.name }}</td>
+                </tr>
+              {% endfor %}
+            {% else %}
+              <tr>
+                <td colspan="3">No classes available.</td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="model-config-grid">
+      <section class="model-detail-subsection">
+        <h3>Feature Config</h3>
+        {% if feature_config_rows %}
+          <div class="table-wrap">
+            <table class="model-detail-table model-kv-table" aria-label="Feature configuration key value table">
+              <thead>
+                <tr>
+                  <th>Key</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in feature_config_rows %}
+                  <tr>
+                    <td><code>{{ row.key }}</code></td>
+                    <td>{{ row.value }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="muted">No feature configuration available.</p>
+        {% endif %}
+      </section>
+
+      <section class="model-detail-subsection">
+        <h3>Hyperparameters</h3>
+        {% if hyperparam_rows %}
+          <div class="table-wrap">
+            <table class="model-detail-table model-kv-table" aria-label="Hyperparameter key value table">
+              <thead>
+                <tr>
+                  <th>Key</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in hyperparam_rows %}
+                  <tr>
+                    <td><code>{{ row.key }}</code></td>
+                    <td>{{ row.value }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="muted">No hyperparameters available.</p>
+        {% endif %}
+      </section>
+    </div>
+
+    <section class="model-detail-subsection">
+      <h3>Paths</h3>
+      <div class="model-path-list">
+        {% for row in path_rows %}
+          <div class="path-row">
+            <span class="path-label">{{ row.label }}</span>
+            <code id="model-path-{{ loop.index }}" class="path-value" title="{{ row.value }}">{{ row.value or "-" }}</code>
+            <button
+              type="button"
+              class="table-action-btn secondary model-copy-btn"
+              data-copy-target="model-path-{{ loop.index }}"
+              {% if not row.value %}disabled{% endif %}
+            >
+              Copy
+            </button>
+          </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="model-detail-subsection">
+      <h3>Model Details</h3>
+      <div class="table-wrap">
+        <table class="model-detail-table" aria-label="Model details">
+          <tbody>
+            <tr><th>ID</th><td>{{ model.id }}</td></tr>
+            <tr><th>Name</th><td>{{ model.name }}</td></tr>
+            <tr><th>Status</th><td>{{ model.status }}</td></tr>
+            <tr><th>Created</th><td>{{ model.created_at }}</td></tr>
+            <tr>
+              <th>Dataset</th>
+              <td>
+                {% if dataset_detail_url %}
+                  <a href="{{ dataset_detail_url }}">{{ model.dataset_name }} (id={{ model.dataset_id }})</a>
+                {% else %}
+                  {{ model.dataset_name }} (id={{ model.dataset_id }})
+                {% endif %}
+              </td>
+            </tr>
+            <tr><th>Dataset Path</th><td><code>{{ model.dataset_path }}</code></td></tr>
+            <tr><th>Image Root</th><td><code>{{ model.dataset_image_root }}</code></td></tr>
+            <tr><th>COCO JSON</th><td><code>{{ model.dataset_coco_json_path }}</code></td></tr>
+            <tr><th>COCO Checksum</th><td><code>{{ model.dataset_coco_checksum }}</code></td></tr>
+            <tr><th>Artifact Dir</th><td><code>{{ model.artifact_dir }}</code></td></tr>
+            <tr><th>Model File</th><td><code>{{ model.model_path }}</code></td></tr>
+            <tr><th>Metadata File</th><td><code>{{ model.metadata_path }}</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </section>
+</div>
+<script src="{{ url_for('static', filename='model_detail.js') }}"></script>
 {% endblock %}
-

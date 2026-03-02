@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+{% block title %}Promote Run {{ run.id }} - {{ workspace.name }}{% endblock %}
+{% block content %}
+<section class="panel analysis-promote-page">
+  <div class="dataset-card-top">
+    <div>
+      <h2>Promote Analysis Run #{{ run.id }}</h2>
+      <p class="muted">
+        Source model: {{ model.name }} (id={{ model.id }}). Source masks use <strong>refined output when available</strong>.
+      </p>
+    </div>
+    <div class="btn-row">
+      <a class="link-btn" href="{{ url_for('main.analysis_details', workspace_id=workspace.id, run_id=run.id) }}">Back to Run Details</a>
+      <a class="link-btn" href="{{ url_for('main.workspace_analysis', workspace_id=workspace.id) }}">Back to Analysis Runs</a>
+    </div>
+  </div>
+
+  <div class="analysis-promote-note">
+    <p>
+      Pixels below the confidence threshold become unlabeled (<code>class_id=0</code>).
+      Cleanup is deterministic and runs after thresholding.
+    </p>
+    {% if missing_conf_total > 0 %}
+      <p class="warning">
+        Warning: {{ missing_conf_total }} output(s) do not have confidence maps. Thresholding will be skipped for those images.
+      </p>
+    {% endif %}
+  </div>
+
+  <form method="post" class="grid-form analysis-promote-form">
+    <section class="analysis-step-card">
+      <h3>Draft Settings</h3>
+      <div class="analysis-promote-grid">
+        <label>
+          Draft name
+          <input type="text" name="draft_name" value="{{ form_state.draft_name }}" required>
+        </label>
+        <label>
+          Confidence acceptance threshold (%)
+          <div class="analysis-range-pair">
+            <input
+              type="range"
+              id="promote-threshold-range"
+              min="0"
+              max="100"
+              step="1"
+              value="{{ form_state.threshold_pct }}"
+            >
+            <input
+              type="number"
+              id="promote-threshold-number"
+              name="threshold_pct"
+              min="0"
+              max="100"
+              step="1"
+              value="{{ form_state.threshold_pct }}"
+            >
+          </div>
+        </label>
+      </div>
+    </section>
+
+    <section class="analysis-step-card">
+      <h3>Optional Cleanup</h3>
+      <div class="analysis-promote-cleanup-grid">
+        <label class="inline-option-row">
+          <input type="checkbox" name="cleanup_remove_small_blobs" value="1" {% if form_state.cleanup_remove_small_blobs %}checked{% endif %}>
+          <span>Remove small blobs</span>
+        </label>
+        <label>
+          Min blob area (px)
+          <input type="number" name="min_blob_px" min="1" step="1" value="{{ form_state.min_blob_px }}">
+        </label>
+
+        <label class="inline-option-row">
+          <input type="checkbox" name="cleanup_fill_small_holes" value="1" {% if form_state.cleanup_fill_small_holes %}checked{% endif %}>
+          <span>Fill small holes</span>
+        </label>
+        <label>
+          Max hole area (px)
+          <input type="number" name="max_hole_px" min="1" step="1" value="{{ form_state.max_hole_px }}">
+        </label>
+
+        <label class="inline-option-row">
+          <input type="checkbox" name="cleanup_boundary_ignore" value="1" {% if form_state.cleanup_boundary_ignore %}checked{% endif %}>
+          <span>Boundary ignore band</span>
+        </label>
+        <label>
+          Boundary width (px)
+          <input type="number" name="boundary_px" min="0" step="1" value="{{ form_state.boundary_px }}">
+        </label>
+      </div>
+    </section>
+
+    <section class="analysis-step-card">
+      <div class="analysis-step-head">
+        <h3>Select Outputs to Promote</h3>
+        <div class="analysis-image-actions">
+          <button type="button" class="secondary" id="promote-select-all">Select all</button>
+          <button type="button" class="secondary" id="promote-clear-all">Clear all</button>
+        </div>
+      </div>
+      <p class="analysis-selection-count" id="promote-selected-count" aria-live="polite">
+        Selected: {{ selected_item_ids|length }} / {{ item_rows|length }}
+      </p>
+      {% if missing_conf_selected > 0 %}
+        <p class="muted">
+          Current selection includes {{ missing_conf_selected }} image(s) without confidence maps.
+        </p>
+      {% endif %}
+      <div class="table-wrap">
+        <table class="datasets-table" id="promote-items-table">
+          <thead>
+            <tr>
+              <th>Select</th>
+              <th>Image</th>
+              <th>Source</th>
+              <th>Confidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in item_rows %}
+              <tr>
+                <td>
+                  <label class="inline-option-row">
+                    <input
+                      type="checkbox"
+                      name="selected_item_ids"
+                      value="{{ row.item_id }}"
+                      {% if row.item_id in selected_item_ids %}checked{% endif %}
+                    >
+                    <span class="sr-only">Select {{ row.input_image_name }}</span>
+                  </label>
+                </td>
+                <td>
+                  <strong>{{ row.input_image_name }}</strong>
+                  <div class="muted"><code>{{ row.input_image }}</code></div>
+                </td>
+                <td>{{ row.source_label }}</td>
+                <td>
+                  {% if row.has_conf %}
+                    <span class="badge">Available</span>
+                  {% else %}
+                    <span class="badge subtle">Missing</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="analysis-step-card">
+      <h3>Class Mapping</h3>
+      <p class="muted">Background remains implicit as <code>class_id=0</code> and is not an editable category.</p>
+      <div class="table-wrap">
+        <table class="datasets-table">
+          <thead>
+            <tr>
+              <th>Class ID</th>
+              <th>Class Name</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for entry in class_entries %}
+              <tr>
+                <td>{{ entry.class_index }}</td>
+                <td>{{ entry.name }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="form-actions analysis-form-actions">
+      <button type="submit">Create Draft Dataset</button>
+      <a class="link-btn" href="{{ url_for('main.analysis_details', workspace_id=workspace.id, run_id=run.id) }}">Cancel</a>
+    </div>
+  </form>
+</section>
+
+<script>
+  (function () {
+    var thresholdRange = document.getElementById("promote-threshold-range");
+    var thresholdNumber = document.getElementById("promote-threshold-number");
+    var selectAllBtn = document.getElementById("promote-select-all");
+    var clearAllBtn = document.getElementById("promote-clear-all");
+    var selectedCount = document.getElementById("promote-selected-count");
+    var checkboxes = Array.prototype.slice.call(
+      document.querySelectorAll("input[name='selected_item_ids']")
+    );
+
+    function syncThresholdFromRange() {
+      if (!thresholdRange || !thresholdNumber) {
+        return;
+      }
+      thresholdNumber.value = thresholdRange.value;
+    }
+
+    function syncThresholdFromNumber() {
+      if (!thresholdRange || !thresholdNumber) {
+        return;
+      }
+      var value = Number(thresholdNumber.value);
+      if (Number.isNaN(value)) {
+        return;
+      }
+      value = Math.max(0, Math.min(100, Math.round(value)));
+      thresholdNumber.value = String(value);
+      thresholdRange.value = String(value);
+    }
+
+    function updateCount() {
+      if (!selectedCount) {
+        return;
+      }
+      var selected = checkboxes.filter(function (checkbox) { return checkbox.checked; }).length;
+      selectedCount.textContent = "Selected: " + selected + " / " + checkboxes.length;
+    }
+
+    if (thresholdRange && thresholdNumber) {
+      thresholdRange.addEventListener("input", syncThresholdFromRange);
+      thresholdNumber.addEventListener("input", syncThresholdFromNumber);
+      thresholdNumber.addEventListener("blur", syncThresholdFromNumber);
+    }
+
+    if (selectAllBtn) {
+      selectAllBtn.addEventListener("click", function () {
+        checkboxes.forEach(function (checkbox) {
+          checkbox.checked = true;
+        });
+        updateCount();
+      });
+    }
+    if (clearAllBtn) {
+      clearAllBtn.addEventListener("click", function () {
+        checkboxes.forEach(function (checkbox) {
+          checkbox.checked = false;
+        });
+        updateCount();
+      });
+    }
+    checkboxes.forEach(function (checkbox) {
+      checkbox.addEventListener("change", updateCount);
+    });
+    updateCount();
+  })();
+</script>
+{% endblock %}

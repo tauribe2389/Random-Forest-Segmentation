@@ -3,32 +3,95 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}Segmentation Trainer{% endblock %}</title>
+    <title>{% block title %}{{ app_name }}{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   </head>
   <body>
-    <header class="site-header">
-      <h1><a href="{{ url_for('main.dashboard') }}">Random Forest Segmentation Lab</a></h1>
-      <nav>
-        <a href="{{ url_for('main.dashboard') }}">Dashboard</a>
-        <a href="{{ url_for('main.register_dataset') }}">Register Dataset</a>
-        <a href="{{ url_for('main.new_analysis') }}">New Analysis</a>
-      </nav>
+    <header class="app-header">
+      <div class="header-brand">
+        <h1>
+          <a href="{{ url_for('main.dashboard_root') }}" style="color:#f8fafc;text-decoration:none;">{{ app_name }}</a>
+        </h1>
+        <div class="sub">ML experimentation workspace for labeling, training, and analysis.</div>
+      </div>
+      {% if active_workspace and workspaces %}
+        <div class="header-controls">
+          <form method="post" action="{{ url_for('main.switch_workspace') }}" class="workspace-switcher-form">
+            <input type="hidden" name="next_url" value="{{ request.path }}">
+            <label>
+              Workspace
+              <select name="workspace_id" onchange="this.form.submit()">
+                {% for ws in workspaces %}
+                  <option value="{{ ws.id }}" {% if ws.id == active_workspace.id %}selected{% endif %}>
+                    {{ ws.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </label>
+          </form>
+        </div>
+      {% endif %}
     </header>
 
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        <section class="flash-wrap">
+    <div class="wrap">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
           {% for category, message in messages %}
-            <div class="flash flash-{{ category }}">{{ message }}</div>
+            <div class="flash {{ category }}" data-flash data-duration="4200">{{ message }}</div>
           {% endfor %}
-        </section>
-      {% endif %}
-    {% endwith %}
+        {% endif %}
+      {% endwith %}
 
-    <main class="container">
+      {% if active_workspace %}
+        <div class="app-shell">
+          <aside class="workspace-sidebar">
+            <ul>
+              {% for item in sidebar_items %}
+                <li>
+                  <a href="{{ item.url }}" class="{% if active_section == item.key %}is-active{% endif %}">{{ item.label }}</a>
+                </li>
+              {% endfor %}
+            </ul>
+          </aside>
+
+          <main class="workspace-main">
+            {% if breadcrumbs %}
+              <nav class="page-breadcrumb" aria-label="Breadcrumb">
+                {% for crumb in breadcrumbs %}
+                  {% if crumb.url %}
+                    <a href="{{ crumb.url }}">{{ crumb.label }}</a>
+                  {% else %}
+                    <span>{{ crumb.label }}</span>
+                  {% endif %}
+                  {% if not loop.last %}
+                    <span class="crumb-sep">/</span>
+                  {% endif %}
+                {% endfor %}
+              </nav>
+            {% endif %}
+      {% endif %}
       {% block content %}{% endblock %}
-    </main>
+      {% if active_workspace %}
+          </main>
+        </div>
+      {% endif %}
+    </div>
+
+    <script>
+      (function () {
+        var flashes = document.querySelectorAll("[data-flash]");
+        flashes.forEach(function (el) {
+          var duration = parseInt(el.getAttribute("data-duration") || "4200", 10);
+          window.setTimeout(function () {
+            el.classList.add("hide");
+            window.setTimeout(function () {
+              if (el && el.parentNode) {
+                el.parentNode.removeChild(el);
+              }
+            }, 420);
+          }, duration);
+        });
+      })();
+    </script>
   </body>
 </html>
-

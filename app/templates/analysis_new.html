@@ -1,45 +1,525 @@
 {% extends "base.html" %}
-{% block title %}New Analysis Run{% endblock %}
+{% block title %}New Analysis Run - {{ workspace.name }}{% endblock %}
 {% block content %}
-<section class="panel">
-  <h2>New Analysis Run</h2>
+<section class="panel analysis-new-panel">
+  <div class="dataset-card-top">
+    <div>
+      <h2>New Analysis Run</h2>
+      <p class="muted">Choose a trained model and workspace images for this run.</p>
+      <p class="analysis-howto">How to use: pick a model and images, then optionally enable structural refinement to compare raw and graph-smoothed outputs in one run.</p>
+    </div>
+    <a class="link-btn" href="{{ url_for('main.workspace_analysis', workspace_id=workspace.id) }}">Back to Analysis Runs</a>
+  </div>
+
   {% if not models %}
-    <p>No trained models available yet.</p>
-    <p><a href="{{ url_for('main.dashboard') }}">Train a model first</a>.</p>
+    <div class="empty-state">
+      <h3>No trained models available yet</h3>
+      <p>Train a model before starting an analysis run.</p>
+      <a class="primary-btn" href="{{ url_for('main.workspace_models', workspace_id=workspace.id) }}">Go to Models</a>
+    </div>
   {% else %}
-    <form method="post" class="grid-form">
-      <label>
-        Model
-        <select name="model_id" required>
-          {% for model in models %}
-            <option value="{{ model.id }}" {% if selected_model_id == model.id %}selected{% endif %}>
-              {{ model.name }} (id={{ model.id }}, dataset={{ model.dataset_name }})
-            </option>
-          {% endfor %}
-        </select>
-      </label>
+    {% set selected_model = (models | selectattr('id', 'equalto', selected_model_id) | list | first) %}
+    {% set pp = postprocess_form or {} %}
+    {% set pp_enabled = pp.get('enabled') %}
+    {% set pp_target_area = pp.get('slic_target_superpixel_area_px', '900') %}
+    {% set pp_n_segments = pp.get('slic_n_segments', '') %}
+    {% set pp_compactness = pp.get('slic_compactness', '10') %}
+    {% set pp_lambda = pp.get('lambda_smooth', '0.7') %}
+    {% set pp_edge_awareness = pp.get('edge_awareness', '0.5') %}
+    {% set pp_iterations = pp.get('iterations', '8') %}
+    {% set pp_temperature = pp.get('temperature', '1.0') %}
+    {% set pp_min_region = pp.get('min_region_area_px', '0') %}
+    <form method="post" class="grid-form analysis-new-form" id="analysis-new-form">
+      <section class="analysis-step-card">
+        <h3>Step 1 - Choose Model</h3>
+        <label>
+          Model
+          <select id="analysis-model-select" name="model_id" required>
+            <option value="" disabled {% if not selected_model_id %}selected{% endif %}>Select a trained model</option>
+            {% for model in models %}
+              <option
+                value="{{ model.id }}"
+                data-model-name="{{ model.name }}"
+                data-model-id="{{ model.id }}"
+                {% if selected_model_id == model.id %}selected{% endif %}
+              >
+                {{ model.name }} - id={{ model.id }} - trained on {{ model.dataset_name or "Unknown dataset" }}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+      </section>
 
-      <h3>Input Image Paths</h3>
-      <label>
-        Explicit image paths (one per line)
-        <textarea name="image_paths" rows="8" placeholder="C:\data\photos\img1.png&#10;C:\data\photos\img2.jpg"></textarea>
-      </label>
+      <section class="analysis-step-card">
+        <div class="analysis-step-head">
+          <h3>Step 2 - Choose Images (Workspace Only)</h3>
+        </div>
 
-      <h3>Or Select Folder + Glob</h3>
-      <label>
-        Image folder path
-        <input type="text" name="image_folder" placeholder="C:\data\photos">
-      </label>
-      <label>
-        Glob pattern
-        <input type="text" name="glob_pattern" value="*.png" placeholder="*.jpg">
-      </label>
+        <fieldset class="analysis-selection-mode">
+          <legend>Selection mode</legend>
+          <label class="inline-option-row">
+            <input type="radio" name="selection_mode" value="manual" {% if form_selection_mode != "dataset" %}checked{% endif %}>
+            <span>Manual</span>
+          </label>
+        </fieldset>
+        <input type="hidden" name="dataset_id" value="{{ form_dataset_id }}">
 
-      <div class="form-actions">
-        <button type="submit">Run Analysis</button>
-      </div>
+        <div class="analysis-image-toolbar">
+          <label class="analysis-image-search">
+            Search filename
+            <input type="text" id="analysis-image-search" placeholder="Filter by filename">
+          </label>
+          <div class="analysis-image-actions">
+            <button type="button" class="secondary" id="analysis-select-visible">Select all visible</button>
+            <button type="button" class="secondary" id="analysis-clear-selection">Clear selection</button>
+          </div>
+          <p class="analysis-selection-count" id="analysis-selected-count" aria-live="polite">
+            Selected: {{ selected_images|length }} image{% if selected_images|length != 1 %}s{% endif %}
+          </p>
+        </div>
+
+        {% if workspace_images %}
+          <div class="collection-thumb-grid analysis-image-grid" id="analysis-image-grid">
+            {% for image in workspace_images %}
+              <article
+                class="collection-thumb-card analysis-image-card {% if image.filename in selected_images %}is-selected{% endif %}"
+                data-filename="{{ image.filename|lower }}"
+                tabindex="0"
+              >
+                <img class="collection-thumb-image" src="{{ image.thumbnail_url }}" alt="{{ image.filename }}" loading="lazy">
+                <div class="collection-thumb-meta">
+                  <label class="analysis-image-choice">
+                    <input
+                      type="checkbox"
+                      name="selected_images"
+                      value="{{ image.filename }}"
+                      {% if image.filename in selected_images %}checked{% endif %}
+                    >
+                    <span class="analysis-image-name"><code>{{ image.filename }}</code></span>
+                  </label>
+                </div>
+              </article>
+            {% endfor %}
+          </div>
+          <p class="muted analysis-empty-filter" id="analysis-no-visible" hidden>No images match the current search.</p>
+        {% else %}
+          <p>No workspace images found. <a href="{{ url_for('labeler.workspace_images', workspace_id=workspace.id) }}">Upload images first</a>.</p>
+        {% endif %}
+
+        <div class="analysis-selection-bar" id="analysis-selection-bar" {% if not selected_images %}hidden{% endif %}>
+          <strong id="analysis-selection-bar-count">
+            Selected: {{ selected_images|length }} image{% if selected_images|length != 1 %}s{% endif %}
+          </strong>
+          <details id="analysis-review-selected">
+            <summary>Review selected</summary>
+            <ul class="analysis-selected-list" id="analysis-selected-list">
+              {% for image_name in selected_images %}
+                <li>{{ image_name }}</li>
+              {% endfor %}
+            </ul>
+          </details>
+        </div>
+      </section>
+
+      <section class="analysis-step-card">
+        <h3>Step 3 - Review &amp; Run</h3>
+        <div class="analysis-postprocess-card">
+          <label class="analysis-postprocess-toggle inline-option-row" title="Inference-time deterministic graph-energy smoothing on SLIC superpixels; not part of RF training.">
+            <input type="checkbox" id="analysis-postprocess-enabled" name="postprocess_enabled" value="1" {% if pp_enabled %}checked{% endif %}>
+            <span>
+              Structural refinement (graph smoothing)
+            </span>
+          </label>
+          <div class="analysis-postprocess-config" id="analysis-postprocess-config" {% if not pp_enabled %}hidden{% endif %}>
+            <label class="analysis-postprocess-field">
+              Superpixel target area (px)
+              <input
+                type="number"
+                min="1"
+                step="1"
+                name="slic_target_superpixel_area_px"
+                value="{{ pp_target_area }}"
+              >
+            </label>
+            <details class="advanced-panel">
+              <summary>Advanced graph smoothing options</summary>
+              <div class="analysis-postprocess-advanced-grid">
+                <label>
+                  n_segments override (optional)
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    name="slic_n_segments"
+                    value="{{ pp_n_segments }}"
+                    placeholder="Leave blank to use target area"
+                  >
+                </label>
+                <label>
+                  Compactness
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    name="slic_compactness"
+                    value="{{ pp_compactness }}"
+                  >
+                </label>
+                <label>
+                  Lambda (&lambda;)
+                  <div class="analysis-range-pair">
+                    <input
+                      type="range"
+                      id="analysis-lambda-range"
+                      min="0"
+                      max="3"
+                      step="0.01"
+                      value="{{ pp_lambda }}"
+                    >
+                    <input
+                      type="number"
+                      id="analysis-lambda-number"
+                      name="lambda_smooth"
+                      min="0"
+                      step="0.01"
+                      value="{{ pp_lambda }}"
+                    >
+                  </div>
+                </label>
+                <label>
+                  Edge awareness
+                  <div class="analysis-range-pair">
+                    <input
+                      type="range"
+                      id="analysis-edge-awareness-range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value="{{ pp_edge_awareness }}"
+                    >
+                    <input
+                      type="number"
+                      id="analysis-edge-awareness-number"
+                      name="edge_awareness"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value="{{ pp_edge_awareness }}"
+                    >
+                  </div>
+                </label>
+                <label>
+                  Iterations
+                  <input
+                    type="number"
+                    name="iterations"
+                    min="1"
+                    step="1"
+                    value="{{ pp_iterations }}"
+                  >
+                </label>
+                <label>
+                  Temperature
+                  <input
+                    type="number"
+                    name="temperature"
+                    min="0.01"
+                    step="0.01"
+                    value="{{ pp_temperature }}"
+                  >
+                </label>
+                <label>
+                  Min cleanup region area (px)
+                  <input
+                    type="number"
+                    name="min_region_area_px"
+                    min="0"
+                    step="1"
+                    value="{{ pp_min_region }}"
+                  >
+                </label>
+              </div>
+            </details>
+          </div>
+        </div>
+        <div class="analysis-review-card">
+          <div class="analysis-review-grid">
+            <div>
+              <span class="analysis-summary-label">Model</span>
+              <p class="analysis-summary-value" id="analysis-summary-model">
+                {% if selected_model %}
+                  {{ selected_model.name }} (id={{ selected_model.id }})
+                {% else %}
+                  No model selected
+                {% endif %}
+              </p>
+            </div>
+            <div>
+              <span class="analysis-summary-label">Selected images</span>
+              <p class="analysis-summary-value" id="analysis-summary-count">{{ selected_images|length }}</p>
+            </div>
+            <div>
+              <span class="analysis-summary-label">Refinement</span>
+              <p class="analysis-summary-value" id="analysis-summary-refinement">
+                {% if pp_enabled %}Enabled{% else %}Disabled{% endif %}
+              </p>
+            </div>
+          </div>
+          <p class="analysis-summary-warning" id="analysis-summary-warning" {% if selected_images %}hidden{% endif %}>
+            Select at least one image to run analysis.
+          </p>
+        </div>
+        <div class="form-actions analysis-form-actions">
+          <button type="submit" id="analysis-run-button" {% if not workspace_images or not selected_images or not selected_model %}disabled{% endif %}>Run Analysis</button>
+          <a class="link-btn" href="{{ url_for('main.workspace_analysis', workspace_id=workspace.id) }}">Cancel</a>
+        </div>
+      </section>
     </form>
   {% endif %}
 </section>
-{% endblock %}
 
+<script>
+  (function () {
+    var form = document.getElementById("analysis-new-form");
+    if (!form) {
+      return;
+    }
+
+    var modelSelect = document.getElementById("analysis-model-select");
+    var searchInput = document.getElementById("analysis-image-search");
+    var selectVisibleBtn = document.getElementById("analysis-select-visible");
+    var clearSelectionBtn = document.getElementById("analysis-clear-selection");
+    var noVisibleEl = document.getElementById("analysis-no-visible");
+    var selectedCountEl = document.getElementById("analysis-selected-count");
+    var selectionBar = document.getElementById("analysis-selection-bar");
+    var selectionBarCount = document.getElementById("analysis-selection-bar-count");
+    var selectedListEl = document.getElementById("analysis-selected-list");
+    var summaryModelEl = document.getElementById("analysis-summary-model");
+    var summaryCountEl = document.getElementById("analysis-summary-count");
+    var summaryRefinementEl = document.getElementById("analysis-summary-refinement");
+    var summaryWarningEl = document.getElementById("analysis-summary-warning");
+    var runBtn = document.getElementById("analysis-run-button");
+    var postprocessEnabled = document.getElementById("analysis-postprocess-enabled");
+    var postprocessConfig = document.getElementById("analysis-postprocess-config");
+    var lambdaRange = document.getElementById("analysis-lambda-range");
+    var lambdaNumber = document.getElementById("analysis-lambda-number");
+    var edgeAwarenessRange = document.getElementById("analysis-edge-awareness-range");
+    var edgeAwarenessNumber = document.getElementById("analysis-edge-awareness-number");
+
+    var cards = Array.prototype.slice.call(document.querySelectorAll(".analysis-image-card"));
+    var checkboxes = Array.prototype.slice.call(document.querySelectorAll("input[name='selected_images']"));
+
+    function checkedBoxes() {
+      return checkboxes.filter(function (item) {
+        return item.checked;
+      });
+    }
+
+    function visibleCards() {
+      return cards.filter(function (card) {
+        return !card.hidden;
+      });
+    }
+
+    function updateModelSummary() {
+      if (!modelSelect || !summaryModelEl) {
+        return;
+      }
+      var selectedOption = modelSelect.options[modelSelect.selectedIndex];
+      if (!selectedOption || !selectedOption.value) {
+        summaryModelEl.textContent = "No model selected";
+        return;
+      }
+      var modelName = selectedOption.getAttribute("data-model-name") || selectedOption.textContent.trim();
+      var modelId = selectedOption.getAttribute("data-model-id") || selectedOption.value;
+      summaryModelEl.textContent = modelName + " (id=" + modelId + ")";
+    }
+
+    function syncCardState(card) {
+      var checkbox = card.querySelector("input[name='selected_images']");
+      if (!checkbox) {
+        return;
+      }
+      card.classList.toggle("is-selected", checkbox.checked);
+    }
+
+    function updateSelectedList() {
+      if (!selectedListEl) {
+        return;
+      }
+      selectedListEl.innerHTML = "";
+      checkedBoxes().forEach(function (checkbox) {
+        var li = document.createElement("li");
+        li.textContent = checkbox.value;
+        selectedListEl.appendChild(li);
+      });
+    }
+
+    function updateSelectionUi() {
+      var count = checkedBoxes().length;
+      var suffix = count === 1 ? "image" : "images";
+      if (selectedCountEl) {
+        selectedCountEl.textContent = "Selected: " + count + " " + suffix;
+      }
+      if (selectionBar) {
+        selectionBar.hidden = count <= 0;
+      }
+      if (selectionBarCount) {
+        selectionBarCount.textContent = "Selected: " + count + " " + suffix;
+      }
+      if (summaryCountEl) {
+        summaryCountEl.textContent = String(count);
+      }
+      if (summaryWarningEl) {
+        summaryWarningEl.hidden = count > 0;
+      }
+      if (runBtn) {
+        var hasModel = modelSelect && modelSelect.value;
+        runBtn.disabled = count <= 0 || checkboxes.length <= 0 || !hasModel;
+      }
+      if (selectVisibleBtn) {
+        var visible = visibleCards();
+        var allVisibleChecked =
+          visible.length > 0 &&
+          visible.every(function (card) {
+            var checkbox = card.querySelector("input[name='selected_images']");
+            return Boolean(checkbox && checkbox.checked);
+          });
+        selectVisibleBtn.textContent = allVisibleChecked ? "Clear visible" : "Select all visible";
+        selectVisibleBtn.disabled = visible.length <= 0;
+      }
+      updateSelectedList();
+    }
+
+    function syncPairInputs(first, second) {
+      if (!first || !second) {
+        return;
+      }
+      var syncFromFirst = function () {
+        second.value = first.value;
+      };
+      var syncFromSecond = function () {
+        first.value = second.value;
+      };
+      first.addEventListener("input", syncFromFirst);
+      second.addEventListener("input", syncFromSecond);
+      second.addEventListener("change", syncFromSecond);
+    }
+
+    function updatePostprocessUi() {
+      var enabled = Boolean(postprocessEnabled && postprocessEnabled.checked);
+      if (postprocessConfig) {
+        postprocessConfig.hidden = !enabled;
+      }
+      if (summaryRefinementEl) {
+        summaryRefinementEl.textContent = enabled ? "Enabled" : "Disabled";
+      }
+    }
+
+    function applyFilter() {
+      var query = searchInput ? searchInput.value.trim().toLowerCase() : "";
+      var visibleCount = 0;
+      cards.forEach(function (card) {
+        var filename = card.getAttribute("data-filename") || "";
+        var isVisible = filename.indexOf(query) >= 0;
+        card.hidden = !isVisible;
+        if (isVisible) {
+          visibleCount += 1;
+        }
+      });
+      if (noVisibleEl) {
+        noVisibleEl.hidden = visibleCount > 0;
+      }
+      updateSelectionUi();
+    }
+
+    cards.forEach(function (card) {
+      var checkbox = card.querySelector("input[name='selected_images']");
+      if (!checkbox) {
+        return;
+      }
+
+      card.addEventListener("click", function (event) {
+        if (event.target.closest("input, label, button, summary, details, a")) {
+          return;
+        }
+        checkbox.checked = !checkbox.checked;
+        syncCardState(card);
+        updateSelectionUi();
+      });
+
+      card.addEventListener("keydown", function (event) {
+        if (event.target !== card) {
+          return;
+        }
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          checkbox.checked = !checkbox.checked;
+          syncCardState(card);
+          updateSelectionUi();
+        }
+      });
+
+      checkbox.addEventListener("change", function () {
+        syncCardState(card);
+        updateSelectionUi();
+      });
+    });
+
+    if (searchInput) {
+      searchInput.addEventListener("input", applyFilter);
+    }
+
+    if (selectVisibleBtn) {
+      selectVisibleBtn.addEventListener("click", function () {
+        var visible = visibleCards();
+        if (!visible.length) {
+          return;
+        }
+        var shouldCheck = visible.some(function (card) {
+          var checkbox = card.querySelector("input[name='selected_images']");
+          return Boolean(checkbox && !checkbox.checked);
+        });
+        visible.forEach(function (card) {
+          var checkbox = card.querySelector("input[name='selected_images']");
+          if (!checkbox) {
+            return;
+          }
+          checkbox.checked = shouldCheck;
+          syncCardState(card);
+        });
+        updateSelectionUi();
+      });
+    }
+
+    if (clearSelectionBtn) {
+      clearSelectionBtn.addEventListener("click", function () {
+        checkboxes.forEach(function (checkbox) {
+          checkbox.checked = false;
+        });
+        cards.forEach(syncCardState);
+        updateSelectionUi();
+      });
+    }
+
+    if (modelSelect) {
+      modelSelect.addEventListener("change", function () {
+        updateModelSummary();
+        updateSelectionUi();
+      });
+    }
+
+    if (postprocessEnabled) {
+      postprocessEnabled.addEventListener("change", updatePostprocessUi);
+    }
+
+    syncPairInputs(lambdaRange, lambdaNumber);
+    syncPairInputs(edgeAwarenessRange, edgeAwarenessNumber);
+
+    cards.forEach(syncCardState);
+    updateModelSummary();
+    updatePostprocessUi();
+    applyFilter();
+  })();
+</script>
+{% endblock %}

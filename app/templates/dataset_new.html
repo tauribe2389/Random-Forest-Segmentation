@@ -1,35 +1,98 @@
 {% extends "base.html" %}
-{% block title %}Register Dataset{% endblock %}
+{% block title %}Create Dataset - {{ workspace.name }}{% endblock %}
 {% block content %}
-<section class="panel narrow">
-  <h2>Register Dataset</h2>
-  <p>Point to a local folder containing COCO annotations and images.</p>
+<section class="panel">
+  <div class="dataset-card-top">
+    <h2>Create Dataset from Workspace Images</h2>
+    <a class="link-btn" href="{{ url_for('main.workspace_datasets', workspace_id=workspace.id) }}">Back to Datasets</a>
+  </div>
+  <p class="muted">Select workspace images to include, then label them with superpixels inside the dataset.</p>
 
   <form method="post" class="grid-form">
     <label>
       Dataset Name
-      <input type="text" name="name" required placeholder="my-coco-dataset">
+      <input type="text" name="name" required value="{{ form_name }}" placeholder="dataset_v1">
     </label>
 
     <label>
-      Dataset Folder Path
-      <input type="text" name="dataset_path" required placeholder="C:\data\dataset_01">
+      Initial Classes (optional, comma or newline separated)
+      <textarea name="categories_text" placeholder="class_1&#10;class_2">{{ form_categories_text }}</textarea>
     </label>
 
-    <label>
-      Image Root (relative to dataset folder)
-      <input type="text" name="image_root" value="images" placeholder="images">
-    </label>
+    <div class="dataset-selection-head">
+      <h3>Select Images</h3>
+      <button type="button" id="toggle-all-images" class="secondary">Select All</button>
+    </div>
 
-    <label>
-      COCO JSON Path (absolute or relative to dataset folder)
-      <input type="text" name="coco_json_path" value="annotations.json" placeholder="annotations.json">
-    </label>
+    {% if workspace_images %}
+      <div class="collection-thumb-grid">
+        {% for image_name in workspace_images %}
+          <article class="collection-thumb-card">
+            <img
+              class="collection-thumb-image"
+              src="{{ url_for('labeler.api_image', workspace_id=workspace.id, image_name=image_name) }}"
+              alt="{{ image_name }}"
+              loading="lazy"
+            >
+            <div class="collection-thumb-meta">
+              <label class="inline-options">
+                <input
+                  type="checkbox"
+                  name="selected_images"
+                  value="{{ image_name }}"
+                  {% if image_name in selected_images %}checked{% endif %}
+                >
+                <span><code>{{ image_name }}</code></span>
+              </label>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p>No images found in this workspace. Upload images first from the Images page.</p>
+    {% endif %}
 
     <div class="form-actions">
-      <button type="submit">Register Dataset</button>
+      <button type="submit" {% if not workspace_images %}disabled{% endif %}>Create Dataset</button>
     </div>
   </form>
 </section>
-{% endblock %}
 
+<script>
+  (function () {
+    var toggleBtn = document.getElementById("toggle-all-images");
+    if (!toggleBtn) {
+      return;
+    }
+    var checkboxes = Array.prototype.slice.call(document.querySelectorAll("input[name='selected_images']"));
+    if (!checkboxes.length) {
+      toggleBtn.disabled = true;
+      return;
+    }
+
+    function allChecked() {
+      return checkboxes.every(function (item) {
+        return item.checked;
+      });
+    }
+
+    function updateButtonText() {
+      toggleBtn.textContent = allChecked() ? "Clear All" : "Select All";
+    }
+
+    toggleBtn.addEventListener("click", function () {
+      var shouldCheck = !allChecked();
+      checkboxes.forEach(function (item) {
+        item.checked = shouldCheck;
+      });
+      updateButtonText();
+    });
+
+    checkboxes.forEach(function (item) {
+      item.addEventListener("change", updateButtonText);
+    });
+
+    updateButtonText();
+  })();
+</script>
+{% endblock %}

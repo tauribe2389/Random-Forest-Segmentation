@@ -1,0 +1,31 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test/coverage caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local runtime/state artifacts
+instance/*.sqlite3
+instance/*.db
+models/
+runs/
+workspace/
+artifacts/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE/editor files
+.vscode/
+.idea/
+
+# OS cruft
+.DS_Store
+Thumbs.db

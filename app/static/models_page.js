@@ -1,0 +1,750 @@
+(function () {
+  var doc = document;
+  var body = doc.body;
+
+  function asArray(nodeList) {
+    return Array.prototype.slice.call(nodeList || []);
+  }
+
+  function lower(value) {
+    return String(value || "").toLowerCase();
+  }
+
+  function parseDateValue(value) {
+    var parsed = Date.parse(String(value || ""));
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  var modal = doc.getElementById("train-model-modal");
+  var openButtons = asArray(doc.querySelectorAll("[data-open-train-modal]"));
+  var closeButton = doc.getElementById("close-train-modal");
+  var form = doc.getElementById("train-model-form");
+  var modelNameInput = doc.getElementById("train-model-name");
+  var datasetSelect = doc.getElementById("train-dataset-id");
+  var datasetContext = doc.getElementById("train-dataset-context");
+  var submitButton = doc.getElementById("train-submit-btn");
+  var resetButton = doc.getElementById("train-reset-btn");
+  var formError = doc.getElementById("train-form-error");
+
+  function openModal() {
+    if (!modal) {
+      return;
+    }
+    modal.hidden = false;
+    body.classList.add("modal-open");
+    if (modelNameInput) {
+      window.setTimeout(function () {
+        modelNameInput.focus();
+      }, 20);
+    }
+    renderDatasetContext();
+  }
+
+  function closeModal() {
+    if (!modal) {
+      return;
+    }
+    modal.hidden = true;
+    body.classList.remove("modal-open");
+    if (formError) {
+      formError.hidden = true;
+      formError.textContent = "";
+    }
+  }
+
+  function isTypingTarget(target) {
+    if (!target) {
+      return false;
+    }
+    var tag = String(target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || tag === "select") {
+      return true;
+    }
+    return !!target.isContentEditable;
+  }
+
+  function getErrorSlot(name) {
+    return doc.querySelector('[data-error-for="' + name + '"]');
+  }
+
+  function setFieldError(name, message) {
+    var slot = getErrorSlot(name);
+    if (slot) {
+      slot.textContent = message || "";
+    }
+  }
+
+  function readNumber(inputName) {
+    if (!form) {
+      return null;
+    }
+    var field = form.elements[inputName];
+    if (!field) {
+      return null;
+    }
+    var value = String(field.value || "").trim();
+    if (!value) {
+      return null;
+    }
+    var num = Number(value);
+    return Number.isFinite(num) ? num : null;
+  }
+
+  function featureInputs() {
+    if (!form) {
+      return [];
+    }
+    return asArray(form.querySelectorAll('input[type="checkbox"][name^="use_"]'));
+  }
+
+  function renderDatasetContext() {
+    if (!datasetSelect || !datasetContext) {
+      return;
+    }
+    var selected = datasetSelect.options[datasetSelect.selectedIndex];
+    if (!selected) {
+      datasetContext.textContent = "Select the dataset used for this training run.";
+      return;
+    }
+    var created = selected.getAttribute("data-created") || "-";
+    var draftId = selected.getAttribute("data-draft-id") || "";
+    var draftVersion = selected.getAttribute("data-draft-version") || "";
+    var sourceText = "Registered dataset";
+    if (draftId) {
+      sourceText = "From draft #" + draftId + (draftVersion ? (" v" + draftVersion) : "");
+    }
+    datasetContext.textContent = sourceText + " • Created " + created;
+  }
+
+  function validateField(name) {
+    if (!form) {
+      return true;
+    }
+    var field = form.elements[name];
+    if (!field) {
+      return true;
+    }
+    var value = String(field.value || "").trim();
+
+    if (name === "model_name") {
+      if (!value) {
+        setFieldError(name, "Model name is required.");
+        return false;
+      }
+      if (value.length < 3) {
+        setFieldError(name, "Use at least 3 characters.");
+        return false;
+      }
+      setFieldError(name, "");
+      return true;
+    }
+
+    if (name === "dataset_id") {
+      if (!value) {
+        setFieldError(name, "Dataset is required.");
+        return false;
+      }
+      setFieldError(name, "");
+      return true;
+    }
+
+    if (name === "n_estimators") {
+      var estimators = readNumber(name);
+      if (estimators === null || estimators < 1) {
+        setFieldError(name, "Must be >= 1.");
+        return false;
+      }
+      setFieldError(name, "");
+      return true;
+    }
+
+    if (name === "min_samples_split") {
+      var split = readNumber(name);
+      if (split === null || split < 2) {
+        setFieldError(name, "Must be >= 2.");
+        return false;
+      }
+      setFieldError(name, "");
+      return true;
+    }
+
+    if (name === "min_samples_leaf") {
+      var leaf = readNumber(name);
+      if (leaf === null || leaf < 1) {
+        setFieldError(name, "Must be >= 1.");
+        return false;
+      }
+      setFieldError(name, "");
+      return true;
+    }
+
+    if (name === "max_depth") {
+      if (!value) {
+        setFieldError(name, "");
+        return true;
+      }
+      var depth = Number(value);
+      if (!Number.isFinite(depth) || depth < 1) {
+        setFieldError(name, "Leave blank or use a value >= 1.");
+        return false;
+      }
+      setFieldError(name, "");
+      return true;
+    }
+
+    if (name === "max_samples_per_class") {
+      var maxSamples = readNumber(name);
+      if (maxSamples === null || maxSamples < 1) {
+        setFieldError(name, "Must be >= 1.");
+        return false;
+      }
+      setFieldError(name, "");
+      return true;
+    }
+
+    if (name === "validation_split") {
+      var validationSplit = readNumber(name);
+      if (validationSplit === null || validationSplit < 0 || validationSplit > 0.95) {
+        setFieldError(name, "Use a value between 0 and 0.95.");
+        return false;
+      }
+      setFieldError(name, "");
+      return true;
+    }
+
+    if (name === "gaussian_sigmas") {
+      if (!value) {
+        setFieldError(name, "Provide at least one sigma value.");
+        return false;
+      }
+      var isValid = /^(\d+(\.\d+)?)(\s*,\s*\d+(\.\d+)?)*$/.test(value);
+      if (!isValid) {
+        setFieldError(name, "Use comma-separated numeric values like 1.0,3.0.");
+        return false;
+      }
+      setFieldError(name, "");
+      return true;
+    }
+
+    if (name === "lbp_points" || name === "lbp_radius") {
+      var useLbp = form.elements.use_lbp;
+      if (useLbp && !useLbp.checked) {
+        setFieldError(name, "");
+        return true;
+      }
+      var numeric = readNumber(name);
+      if (numeric === null || numeric < 1) {
+        setFieldError(name, "Must be >= 1 when LBP is enabled.");
+        return false;
+      }
+      setFieldError(name, "");
+      return true;
+    }
+
+    return true;
+  }
+
+  function validateFeatures() {
+    var checked = featureInputs().filter(function (item) {
+      return !!item.checked;
+    }).length;
+    if (checked < 1) {
+      setFieldError("feature_flags", "Select at least one feature channel.");
+      return false;
+    }
+    setFieldError("feature_flags", "");
+    return true;
+  }
+
+  function validateForm() {
+    if (!form) {
+      return true;
+    }
+    var checks = [
+      "model_name",
+      "dataset_id",
+      "n_estimators",
+      "max_depth",
+      "min_samples_split",
+      "min_samples_leaf",
+      "max_samples_per_class",
+      "validation_split",
+      "gaussian_sigmas",
+      "lbp_points",
+      "lbp_radius"
+    ];
+    var allValid = true;
+    checks.forEach(function (name) {
+      if (!validateField(name)) {
+        allValid = false;
+      }
+    });
+    if (!validateFeatures()) {
+      allValid = false;
+    }
+    return allValid;
+  }
+
+  function lockSubmitState(isSubmitting) {
+    if (!form || !submitButton) {
+      return;
+    }
+    submitButton.disabled = !!isSubmitting;
+    submitButton.textContent = isSubmitting ? "Training..." : "Train Model";
+    form.setAttribute("data-submitting", isSubmitting ? "true" : "false");
+  }
+
+  openButtons.forEach(function (button) {
+    button.addEventListener("click", openModal);
+  });
+  if (closeButton) {
+    closeButton.addEventListener("click", closeModal);
+  }
+  if (modal) {
+    modal.addEventListener("click", function (event) {
+      if (event.target === modal) {
+        closeModal();
+      }
+    });
+  }
+
+  if (form) {
+    renderDatasetContext();
+    datasetSelect.addEventListener("change", function () {
+      renderDatasetContext();
+      validateField("dataset_id");
+    });
+    asArray(form.querySelectorAll("input, select")).forEach(function (control) {
+      control.addEventListener("input", function () {
+        if (control.name) {
+          validateField(control.name);
+        }
+        if (String(control.name || "").indexOf("use_") === 0) {
+          validateFeatures();
+        }
+      });
+      control.addEventListener("change", function () {
+        if (control.name) {
+          validateField(control.name);
+        }
+        if (String(control.name || "").indexOf("use_") === 0) {
+          validateFeatures();
+        }
+      });
+    });
+    form.addEventListener("submit", function (event) {
+      if (form.getAttribute("data-submitting") === "true") {
+        event.preventDefault();
+        return;
+      }
+      if (!validateForm()) {
+        event.preventDefault();
+        if (formError) {
+          formError.hidden = false;
+          formError.textContent = "Fix validation errors before starting training.";
+        }
+        var firstError = form.querySelector(".field-error:not(:empty)");
+        if (firstError) {
+          var parentLabel = firstError.closest("label");
+          var input = parentLabel ? parentLabel.querySelector("input,select,textarea") : null;
+          if (input) {
+            input.focus();
+          }
+        }
+        return;
+      }
+      if (formError) {
+        formError.hidden = true;
+        formError.textContent = "";
+      }
+      lockSubmitState(true);
+    });
+    if (resetButton) {
+      resetButton.addEventListener("click", function () {
+        form.reset();
+        asArray(form.querySelectorAll(".field-error")).forEach(function (slot) {
+          slot.textContent = "";
+        });
+        if (formError) {
+          formError.hidden = true;
+          formError.textContent = "";
+        }
+        lockSubmitState(false);
+        renderDatasetContext();
+      });
+    }
+  }
+
+  var table = doc.getElementById("models-table");
+  if (!table) {
+    doc.addEventListener("keydown", function (event) {
+      var typing = isTypingTarget(doc.activeElement);
+      if (event.key === "Escape" && modal && !modal.hidden) {
+        event.preventDefault();
+        closeModal();
+        return;
+      }
+      if (typing && (event.ctrlKey || event.metaKey) && event.key === "Enter" && form && modal && !modal.hidden) {
+        event.preventDefault();
+        form.requestSubmit();
+        return;
+      }
+      if (!typing && (event.key === "n" || event.key === "N") && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        if (openButtons.length) {
+          event.preventDefault();
+          openModal();
+        }
+      }
+    });
+    return;
+  }
+
+  var tbody = table.querySelector("tbody");
+  var rows = asArray(tbody.querySelectorAll("tr.model-row"));
+  var searchInput = doc.getElementById("model-search");
+  var statusFilter = doc.getElementById("model-status-filter");
+  var datasetFilter = doc.getElementById("model-dataset-filter");
+  var clearFilters = doc.getElementById("clear-model-filters");
+  var selectAll = doc.getElementById("model-select-all");
+  var selectionPill = doc.getElementById("model-selection-pill");
+  var visiblePill = doc.getElementById("models-visible-pill");
+  var sortHeaders = asArray(table.querySelectorAll("th[data-sort-key]"));
+  var activeIndex = -1;
+  var anchorIndex = -1;
+  var sortState = { key: "created", direction: "desc" };
+
+  function visibleRows() {
+    return rows.filter(function (row) {
+      return !row.hidden;
+    });
+  }
+
+  function selectedRows() {
+    return rows.filter(function (row) {
+      var box = row.querySelector(".model-row-select");
+      return box && box.checked;
+    });
+  }
+
+  function setRowSelected(row, selected) {
+    var box = row.querySelector(".model-row-select");
+    if (!box) {
+      return;
+    }
+    box.checked = !!selected;
+    row.classList.toggle("is-selected", !!selected);
+  }
+
+  function clearAllSelections() {
+    rows.forEach(function (row) {
+      setRowSelected(row, false);
+    });
+  }
+
+  function setActiveRow(nextIndex) {
+    if (!rows.length) {
+      activeIndex = -1;
+      return;
+    }
+    if (nextIndex < 0) {
+      rows.forEach(function (row) {
+        row.classList.remove("is-active");
+      });
+      activeIndex = -1;
+      return;
+    }
+    if (nextIndex >= rows.length) {
+      nextIndex = rows.length - 1;
+    }
+    rows.forEach(function (row, index) {
+      row.classList.toggle("is-active", index === nextIndex);
+    });
+    activeIndex = nextIndex;
+  }
+
+  function firstVisibleRowIndex() {
+    for (var i = 0; i < rows.length; i += 1) {
+      if (!rows[i].hidden) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  function updateSelectionPills() {
+    var selectedCount = selectedRows().length;
+    var visibleCount = visibleRows().length;
+    if (selectionPill) {
+      selectionPill.textContent = selectedCount + " selected";
+    }
+    if (visiblePill) {
+      visiblePill.textContent = visibleCount + " / " + rows.length + " shown";
+    }
+    if (selectAll) {
+      var visible = visibleRows();
+      var visibleSelected = visible.filter(function (row) {
+        var box = row.querySelector(".model-row-select");
+        return box && box.checked;
+      }).length;
+      selectAll.checked = visible.length > 0 && visibleSelected === visible.length;
+    }
+  }
+
+  function applyFilters() {
+    var searchText = lower(searchInput ? searchInput.value : "");
+    var statusText = lower(statusFilter ? statusFilter.value : "");
+    var datasetText = lower(datasetFilter ? datasetFilter.value : "");
+    rows.forEach(function (row) {
+      var matchesSearch =
+        !searchText ||
+        lower(row.getAttribute("data-name")).indexOf(searchText) >= 0 ||
+        lower(row.getAttribute("data-dataset")).indexOf(searchText) >= 0 ||
+        lower(row.getAttribute("data-status")).indexOf(searchText) >= 0;
+      var matchesStatus = !statusText || lower(row.getAttribute("data-status")) === statusText;
+      var matchesDataset = !datasetText || lower(row.getAttribute("data-dataset")) === datasetText;
+      row.hidden = !(matchesSearch && matchesStatus && matchesDataset);
+    });
+    if (activeIndex >= 0 && activeIndex < rows.length && !rows[activeIndex].hidden) {
+      setActiveRow(activeIndex);
+    } else {
+      setActiveRow(-1);
+    }
+    updateSelectionPills();
+  }
+
+  function populateFilters() {
+    var statuses = {};
+    var datasets = {};
+    rows.forEach(function (row) {
+      var statusKey = lower(row.getAttribute("data-status"));
+      var statusLabel = String(row.getAttribute("data-status-label") || statusKey);
+      var datasetKey = lower(row.getAttribute("data-dataset"));
+      var datasetLabel = String(row.getAttribute("data-dataset-label") || datasetKey);
+      if (statusKey) {
+        statuses[statusKey] = statusLabel;
+      }
+      if (datasetKey) {
+        datasets[datasetKey] = datasetLabel;
+      }
+    });
+    Object.keys(statuses).sort().forEach(function (status) {
+      var option = doc.createElement("option");
+      option.value = status;
+      option.textContent = statuses[status];
+      statusFilter.appendChild(option);
+    });
+    Object.keys(datasets).sort().forEach(function (dataset) {
+      var option = doc.createElement("option");
+      option.value = dataset;
+      option.textContent = datasets[dataset];
+      datasetFilter.appendChild(option);
+    });
+  }
+
+  function sortRows(key, direction) {
+    rows.sort(function (a, b) {
+      var aVal = "";
+      var bVal = "";
+      if (key === "created") {
+        aVal = parseDateValue(a.getAttribute("data-created"));
+        bVal = parseDateValue(b.getAttribute("data-created"));
+      } else if (key === "dataset") {
+        aVal = lower(a.getAttribute("data-dataset"));
+        bVal = lower(b.getAttribute("data-dataset"));
+      } else if (key === "status") {
+        aVal = lower(a.getAttribute("data-status"));
+        bVal = lower(b.getAttribute("data-status"));
+      } else {
+        aVal = lower(a.getAttribute("data-name"));
+        bVal = lower(b.getAttribute("data-name"));
+      }
+      if (aVal < bVal) {
+        return direction === "asc" ? -1 : 1;
+      }
+      if (aVal > bVal) {
+        return direction === "asc" ? 1 : -1;
+      }
+      return 0;
+    });
+    rows.forEach(function (row) {
+      tbody.appendChild(row);
+    });
+    sortHeaders.forEach(function (header) {
+      header.classList.remove("is-sorted-asc");
+      header.classList.remove("is-sorted-desc");
+      if (header.getAttribute("data-sort-key") === key) {
+        header.classList.add(direction === "asc" ? "is-sorted-asc" : "is-sorted-desc");
+      }
+    });
+    applyFilters();
+  }
+
+  rows.forEach(function (row, index) {
+    var checkbox = row.querySelector(".model-row-select");
+    row.addEventListener("click", function (event) {
+      var target = event.target;
+      var targetTag = target ? String(target.tagName || "").toLowerCase() : "";
+      if (targetTag === "a" || targetTag === "button") {
+        return;
+      }
+      if (target && target.classList && target.classList.contains("model-row-select")) {
+        row.classList.toggle("is-selected", !!target.checked);
+        anchorIndex = index;
+        setActiveRow(index);
+        updateSelectionPills();
+        return;
+      }
+      if (event.shiftKey && anchorIndex >= 0) {
+        var minIndex = Math.min(anchorIndex, index);
+        var maxIndex = Math.max(anchorIndex, index);
+        clearAllSelections();
+        for (var i = minIndex; i <= maxIndex; i += 1) {
+          if (!rows[i].hidden) {
+            setRowSelected(rows[i], true);
+          }
+        }
+      } else if (event.ctrlKey || event.metaKey) {
+        setRowSelected(row, !checkbox.checked);
+        anchorIndex = index;
+      } else {
+        clearAllSelections();
+        setRowSelected(row, true);
+        anchorIndex = index;
+      }
+      setActiveRow(index);
+      updateSelectionPills();
+    });
+    row.addEventListener("focus", function () {
+      setActiveRow(index);
+    });
+  });
+
+  sortHeaders.forEach(function (header) {
+    header.addEventListener("click", function () {
+      var key = String(header.getAttribute("data-sort-key") || "created");
+      if (sortState.key === key) {
+        sortState.direction = sortState.direction === "asc" ? "desc" : "asc";
+      } else {
+        sortState.key = key;
+        sortState.direction = key === "created" ? "desc" : "asc";
+      }
+      sortRows(sortState.key, sortState.direction);
+    });
+  });
+
+  if (selectAll) {
+    selectAll.addEventListener("change", function () {
+      visibleRows().forEach(function (row) {
+        setRowSelected(row, selectAll.checked);
+      });
+      updateSelectionPills();
+    });
+  }
+
+  searchInput.addEventListener("input", applyFilters);
+  statusFilter.addEventListener("change", applyFilters);
+  datasetFilter.addEventListener("change", applyFilters);
+  clearFilters.addEventListener("click", function () {
+    searchInput.value = "";
+    statusFilter.value = "";
+    datasetFilter.value = "";
+    applyFilters();
+  });
+
+  function moveActiveRow(delta) {
+    if (!rows.length) {
+      return;
+    }
+    if (activeIndex < 0) {
+      var first = firstVisibleRowIndex();
+      if (first < 0) {
+        return;
+      }
+      setActiveRow(first);
+      rows[first].focus();
+      rows[first].scrollIntoView({ block: "nearest" });
+      return;
+    }
+    var current = activeIndex;
+    var next = current;
+    do {
+      next += delta > 0 ? 1 : -1;
+    } while (next >= 0 && next < rows.length && rows[next].hidden);
+    if (next >= 0 && next < rows.length) {
+      setActiveRow(next);
+      rows[next].focus();
+      rows[next].scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  function openActiveRowUrl(type) {
+    if (activeIndex < 0 || !rows[activeIndex] || rows[activeIndex].hidden) {
+      return;
+    }
+    var key = type === "analysis" ? "data-analysis-url" : "data-details-url";
+    var url = rows[activeIndex].getAttribute(key);
+    if (url) {
+      window.location.assign(url);
+    }
+  }
+
+  doc.addEventListener("keydown", function (event) {
+    var typing = isTypingTarget(doc.activeElement);
+    if (event.key === "Escape") {
+      if (modal && !modal.hidden) {
+        event.preventDefault();
+        closeModal();
+        return;
+      }
+      if (!typing) {
+        clearAllSelections();
+        updateSelectionPills();
+      }
+    }
+    if (typing) {
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && form && modal && !modal.hidden) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+      return;
+    }
+    if (modal && !modal.hidden) {
+      return;
+    }
+    if (event.key === "/") {
+      event.preventDefault();
+      searchInput.focus();
+      searchInput.select();
+      return;
+    }
+    if ((event.key === "n" || event.key === "N") && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      if (openButtons.length) {
+        event.preventDefault();
+        openModal();
+      }
+      return;
+    }
+    if (event.key === "j" || event.key === "J") {
+      event.preventDefault();
+      moveActiveRow(1);
+      return;
+    }
+    if (event.key === "k" || event.key === "K") {
+      event.preventDefault();
+      moveActiveRow(-1);
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (event.shiftKey) {
+        openActiveRowUrl("analysis");
+      } else {
+        openActiveRowUrl("details");
+      }
+    }
+  });
+
+  populateFilters();
+  sortRows(sortState.key, sortState.direction);
+  updateSelectionPills();
+})();

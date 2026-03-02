@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block title %}Label {{ image_name }} - {{ app_name }}{% endblock %}
+{% block content %}
+<section class="labeler-layout">
+  <aside class="panel labeler-tools-card">
+    <div>
+      <h2>Label Image</h2>
+    </div>
+    <p class="labeler-image-name"><code>{{ image_name }}</code></p>
+
+    <section class="labeler-inspector-group">
+      <h3 class="labeler-inspector-title">Label</h3>
+      <label>
+        Class
+        <select id="class-select">
+          {% for class_entry in classes %}
+            <option value="{{ class_entry.id }}" {% if class_entry.id == default_class_id %}selected{% endif %}>
+              {{ class_entry.name }}
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <div class="labeler-mode-toggle" role="group" aria-label="Labeling Mode">
+        <button id="mode-add" class="mode-toggle-btn active" type="button" title="Shortcut: A">Add</button>
+        <button id="mode-remove" class="mode-toggle-btn" type="button" title="Shortcut: E">Erase</button>
+      </div>
+
+      <label class="checkbox">
+        <input id="toggle-boundary" type="checkbox" checked>
+        Show superpixel boundaries
+      </label>
+    </section>
+
+    <section class="labeler-inspector-group">
+      <h3 class="labeler-inspector-title">Selection</h3>
+      <div class="labeler-tool-toggle" role="group" aria-label="Selection Tool">
+        <button id="selection-tool-single" class="tool-toggle-btn active" type="button" data-tool="single" title="Shortcut: V">Single (V)</button>
+        <button id="selection-tool-brush" class="tool-toggle-btn" type="button" data-tool="brush" title="Shortcut: B">Brush (B)</button>
+        <button id="selection-tool-marquee" class="tool-toggle-btn" type="button" data-tool="marquee" title="Shortcut: M">Marquee (M)</button>
+      </div>
+
+      <label id="marquee-rule-wrap">
+        Marquee Rule
+        <select id="marquee-rule">
+          <option value="centroid" selected>Centroid In Rectangle</option>
+          <option value="intersects">Any Intersection</option>
+        </select>
+      </label>
+
+      <div class="labeler-selection-row">
+        <span id="selection-count" class="selection-count-pill">0 selected</span>
+        <button id="apply-selection-btn" type="button">Apply Selection</button>
+        <button id="clear-selection-btn" type="button" class="secondary">Clear</button>
+      </div>
+    </section>
+
+    <details class="accordion-panel labeler-advanced-panel">
+      <summary>Advanced Superpixels</summary>
+      <div class="accordion-body">
+        <section class="slic-preset-panel">
+          <h3>Superpixel Compute</h3>
+          <p class="muted">Algorithm: SLIC</p>
+          <label>
+            Preset
+            <select id="slic-preset-mode">
+              <option value="dataset_default" {% if slic_current.preset_mode == 'dataset_default' %}selected{% endif %}>Dataset Default</option>
+              <option value="detail" {% if slic_current.preset_mode == 'detail' %}selected{% endif %}>Detail Preset</option>
+              <option value="custom" {% if slic_current.preset_mode == 'custom' %}selected{% endif %}>Custom...</option>
+            </select>
+          </label>
+
+          <label id="slic-detail-wrap">
+            Detail
+            <select id="slic-detail">
+              <option value="low" {% if slic_current.detail_level == 'low' %}selected{% endif %}>Low</option>
+              <option value="medium" {% if slic_current.detail_level == 'medium' %}selected{% endif %}>Medium</option>
+              <option value="high" {% if slic_current.detail_level == 'high' %}selected{% endif %}>High</option>
+            </select>
+          </label>
+
+          <label>
+            Colorspace
+            <select id="slic-colorspace">
+              <option value="lab" {% if slic_current.colorspace == 'lab' %}selected{% endif %}>Lab</option>
+              <option value="rgb" {% if slic_current.colorspace == 'rgb' %}selected{% endif %}>RGB</option>
+            </select>
+          </label>
+
+          <div id="slic-custom-wrap" class="slic-custom-grid">
+            <label>
+              Target Superpixel Count
+              <input id="slic-n-segments" type="range" min="50" max="5000" step="10" value="{{ slic_current.n_segments }}">
+              <span id="slic-n-segments-value">{{ slic_current.n_segments }}</span>
+            </label>
+            <label>
+              Compactness
+              <input id="slic-compactness" type="range" min="0.1" max="80" step="0.1" value="{{ slic_current.compactness }}">
+              <span id="slic-compactness-value">{{ "%.2f"|format(slic_current.compactness) }}</span>
+            </label>
+            <label>
+              Sigma (pre-blur)
+              <input id="slic-sigma" type="range" min="0" max="5" step="0.1" value="{{ slic_current.sigma }}">
+              <span id="slic-sigma-value">{{ "%.2f"|format(slic_current.sigma) }}</span>
+            </label>
+          </div>
+
+          <div class="slic-action-grid">
+            <button id="recompute-slic-btn" type="button">Recompute Superpixels</button>
+            <button id="reset-slic-default-btn" type="button" class="secondary">Reset to Dataset Default</button>
+            <button id="apply-slic-remaining-btn" type="button" class="secondary">Apply to Remaining Images</button>
+          </div>
+        </section>
+      </div>
+    </details>
+
+    <div class="labeler-action-grid">
+      <button id="undo-btn" type="button" class="secondary">Undo</button>
+      <button id="redo-btn" type="button" class="secondary">Redo</button>
+      <button id="export-btn" type="button">Export COCO</button>
+    </div>
+
+    <div class="labeler-zoom-controls">
+      <button id="zoom-out-btn" type="button" class="secondary">-</button>
+      <button id="zoom-in-btn" type="button" class="secondary">+</button>
+      <button id="zoom-fit-btn" type="button" class="secondary">Fit</button>
+      <strong id="zoom-level">100%</strong>
+    </div>
+
+    <div class="labeler-save-sticky">
+      <button id="save-btn" type="button" class="labeler-save-primary" title="Shortcut: Ctrl+S / Cmd+S">Save Masks</button>
+      <div class="labeler-save-row">
+        <span id="dirty-indicator" class="dirty-indicator clean">Saved</span>
+        <span id="status" class="labeler-status">Ready.</span>
+      </div>
+    </div>
+  </aside>
+
+  <section class="panel labeler-canvas-card">
+    <div class="labeler-canvas-head">
+      <h3>Labeling Canvas</h3>
+      <p class="muted">Wheel: zoom, Space+drag or middle mouse: pan, Right-click: erase, brush/marquee selects IDs.</p>
+    </div>
+    <div id="canvas-viewport" class="labeler-canvas-viewport" tabindex="0">
+      <div id="canvas-stage" class="labeler-canvas-stage">
+        <img id="base-image" src="{{ image_url }}" alt="{{ image_name }}" draggable="false">
+        <img id="boundary-image" class="overlay" src="{{ boundary_url }}" alt="" draggable="false">
+        <img id="mask-image" class="overlay" src="data:image/png;base64,{{ initial_mask_base64 }}" alt="" draggable="false">
+        <img id="selection-image" class="overlay selection-overlay" src="" alt="" draggable="false">
+      </div>
+      <div id="marquee-rect" class="marquee-rect" hidden></div>
+    </div>
+    {% if filmstrip_items %}
+      <section class="labeler-filmstrip-panel" aria-label="Image Filmstrip">
+        <div class="labeler-filmstrip-head">
+          <strong>Filmstrip</strong>
+          <span class="muted">{{ filmstrip_items|length }} images</span>
+        </div>
+        <div id="labeler-filmstrip" class="labeler-filmstrip" tabindex="0">
+          {% for item in filmstrip_items %}
+            <a
+              class="filmstrip-item {% if item.is_current %}is-current{% endif %}"
+              href="{{ item.label_url }}"
+              data-image-name="{{ item.image_name }}"
+              title="{{ item.image_name }}"
+              aria-label="{{ item.image_name }}"
+            >
+              <span class="filmstrip-thumb-wrap">
+                <img
+                  class="filmstrip-thumb"
+                  data-src="{{ item.thumbnail_url }}"
+                  alt="{{ item.image_name }}"
+                  loading="lazy"
+                  width="72"
+                  height="72"
+                >
+                <span class="filmstrip-indicator {% if item.is_labeled %}is-labeled{% else %}is-empty{% endif %}" aria-hidden="true">
+                  {% if item.is_labeled %}✔{% else %}○{% endif %}
+                </span>
+              </span>
+            </a>
+          {% endfor %}
+        </div>
+      </section>
+    {% endif %}
+  </section>
+</section>
+
+<div id="labeler-toast-stack" class="labeler-toast-stack" aria-live="polite" aria-atomic="true"></div>
+
+<script>
+  window.APP_CONFIG = {
+    imageName: {{ image_name|tojson }},
+    classes: {{ classes|tojson }},
+    categories: {{ categories|tojson }},
+    classNameMap: {{ class_name_map|tojson }},
+    defaultClassId: {{ default_class_id|tojson }},
+    apiBase: {{ api_base|tojson }},
+    prevImageUrl: {{ prev_image_url|tojson }},
+    nextImageUrl: {{ next_image_url|tojson }},
+    slicDefault: {{ slic_default|tojson }},
+    slicCurrent: {{ slic_current|tojson }},
+    slicDetailPresets: {{ slic_detail_presets|tojson }}
+  };
+</script>
+<script src="{{ url_for('static', filename='labeler.js') }}"></script>
+{% endblock %}

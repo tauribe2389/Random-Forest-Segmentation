@@ -110,6 +110,7 @@ class TrainConfig:
     max_samples_per_class: int = 5000
     validation_split: float = 0.2
     overlap_policy: str = "higher_area_wins"
+    use_rle: bool = True
     random_state: int = 42
 
     @classmethod
@@ -131,6 +132,7 @@ class TrainConfig:
         min_samples_split = int(form.get("min_samples_split", 2))
         min_samples_leaf = int(form.get("min_samples_leaf", 1))
         max_samples_per_class = int(form.get("max_samples_per_class", 5000))
+        use_rle = _parse_bool(form.get("use_rle"), default=True)
         random_state = int(form.get("random_state", default_seed))
 
         if n_estimators <= 0:
@@ -149,6 +151,7 @@ class TrainConfig:
             max_samples_per_class=max_samples_per_class,
             validation_split=validation_split,
             overlap_policy=overlap_policy,
+            use_rle=use_rle,
             random_state=random_state,
         )
 
@@ -163,6 +166,7 @@ class TrainConfig:
             max_samples_per_class=int(data.get("max_samples_per_class", 5000)),
             validation_split=float(data.get("validation_split", 0.2)),
             overlap_policy=str(data.get("overlap_policy", "higher_area_wins")),
+            use_rle=bool(data.get("use_rle", True)),
             random_state=int(data.get("random_state", 42)),
         )
 

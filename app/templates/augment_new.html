@@ -1,0 +1,437 @@
+﻿{% extends "base.html" %}
+{% block title %}Dataset Augmentation - {{ app_name }}{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Dataset Augmentation</h2>
+  <p class="muted">
+    Build a source-only augmentation recipe. Each step selects source images and applies one transform.
+  </p>
+
+  {% if not datasets %}
+    <p>No datasets are registered yet.</p>
+    <p><a class="link-btn" href="{{ url_for('main.register_dataset', workspace_id=workspace.id) }}">Register Dataset</a></p>
+  {% else %}
+    <form method="post" class="grid-form" id="augment-recipe-form">
+      <label>
+        Source Dataset
+        <select name="source_dataset_id" required>
+          {% for dataset in datasets %}
+            <option value="{{ dataset.id }}" {% if selected_source_dataset_id == dataset.id %}selected{% endif %}>
+              {{ dataset.name }} (id={{ dataset.id }})
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>
+        New Draft Name
+        <input type="text" name="output_name" value="{{ request.form.get('output_name', 'augmented_dataset') }}" required>
+      </label>
+
+      <label class="inline-option-row">
+        <input type="checkbox" name="include_original" {% if request.method != 'POST' or request.form.get('include_original') %}checked{% endif %}>
+        Include original source images
+      </label>
+
+      <label>
+        Minimum Annotation Area (pixels)
+        <input type="number" name="min_area" min="1" value="{{ request.form.get('min_area', '1') }}">
+      </label>
+
+      <section class="augment-recipe-panel" aria-labelledby="recipe-heading">
+        <div class="augment-recipe-head">
+          <h3 id="recipe-heading">Recipe Steps</h3>
+          <button type="button" class="link-btn" id="add-recipe-step">Add Step</button>
+        </div>
+        <p class="muted">Selection mode: FIFO, Random, or Selected. Percent is ignored when mode is Selected.</p>
+        <div id="augment-recipe-list" class="augment-recipe-list"></div>
+      </section>
+
+      <input type="hidden" name="recipe_json" id="recipe-json" value="{{ request.form.get('recipe_json', '') }}">
+
+      <div class="form-actions">
+        <button type="submit">Run Augmentation</button>
+      </div>
+    </form>
+  {% endif %}
+</section>
+
+{% if datasets %}
+<script>
+  (function () {
+    const transformOptions = [
+      { value: "flip_h", label: "Flip Horizontal" },
+      { value: "flip_v", label: "Flip Vertical" },
+      { value: "rot90", label: "Rotate 90" },
+      { value: "rot180", label: "Rotate 180" },
+      { value: "color_jitter", label: "Color Jitter" },
+      { value: "grayscale", label: "Grayscale" },
+      { value: "channel_shuffle", label: "Channel Shuffle" },
+      { value: "gaussian_noise", label: "Gaussian Noise" },
+      { value: "speckle_noise", label: "Speckle Noise" },
+      { value: "gaussian_blur", label: "Gaussian Blur" },
+    ];
+
+    const transformSettingSchema = {
+      color_jitter: [
+        { key: "brightness", label: "Brightness", type: "number", min: "0", max: "1", step: "0.01", default: "0.2" },
+        { key: "contrast", label: "Contrast", type: "number", min: "0", max: "1", step: "0.01", default: "0.2" },
+        { key: "saturation", label: "Saturation", type: "number", min: "0", max: "1", step: "0.01", default: "0.2" },
+        { key: "hue", label: "Hue", type: "number", min: "-0.5", max: "0.5", step: "0.01", default: "0.05" },
+      ],
+      grayscale: [
+        { key: "alpha", label: "Strength", type: "number", min: "0", max: "1", step: "0.01", default: "1.0" },
+      ],
+      channel_shuffle: [
+        { key: "mode", label: "Shuffle Mode", type: "select", default: "random", options: [
+          { value: "random", label: "Random" },
+          { value: "fixed", label: "Fixed" },
+        ] },
+        { key: "order", label: "Fixed Order (R,G,B indices)", type: "text", default: "2,1,0", placeholder: "2,1,0" },
+      ],
+      gaussian_noise: [
+        { key: "mean", label: "Mean", type: "number", min: "-255", max: "255", step: "0.1", default: "0" },
+        { key: "std", label: "Stddev", type: "number", min: "0", max: "255", step: "0.1", default: "8" },
+      ],
+      speckle_noise: [
+        { key: "std", label: "Stddev", type: "number", min: "0", max: "3", step: "0.01", default: "0.15" },
+      ],
+      gaussian_blur: [
+        { key: "sigma", label: "Sigma", type: "number", min: "0", max: "10", step: "0.1", default: "1.0" },
+      ],
+    };
+
+    const recipeListEl = document.getElementById("augment-recipe-list");
+    const addStepBtn = document.getElementById("add-recipe-step");
+    const recipeJsonInput = document.getElementById("recipe-json");
+    const formEl = document.getElementById("augment-recipe-form");
+    const includeOriginalEl = formEl ? formEl.querySelector("input[name='include_original']") : null;
+    if (!recipeListEl || !addStepBtn || !recipeJsonInput || !formEl || !includeOriginalEl) {
+      return;
+    }
+
+    function buildTransformSelect(selected) {
+      const select = document.createElement("select");
+      select.className = "recipe-transform";
+      transformOptions.forEach(function (optionDef) {
+        const option = document.createElement("option");
+        option.value = optionDef.value;
+        option.textContent = optionDef.label;
+        if (selected === optionDef.value) {
+          option.selected = true;
+        }
+        select.appendChild(option);
+      });
+      return select;
+    }
+
+    function buildModeSelect(selected) {
+      const select = document.createElement("select");
+      select.className = "recipe-selection-mode";
+      [
+        { value: "fifo", label: "FIFO" },
+        { value: "random", label: "Random" },
+        { value: "selected", label: "Selected" },
+      ].forEach(function (item) {
+        const option = document.createElement("option");
+        option.value = item.value;
+        option.textContent = item.label;
+        if (selected === item.value) {
+          option.selected = true;
+        }
+        select.appendChild(option);
+      });
+      return select;
+    }
+
+    function renderSettings(stepEl, settings, transform) {
+      const settingsHost = stepEl.querySelector(".recipe-settings-host");
+      if (!settingsHost) {
+        return;
+      }
+      settingsHost.innerHTML = "";
+      const schema = transformSettingSchema[transform] || [];
+      if (!schema.length) {
+        settingsHost.classList.add("is-empty");
+        settingsHost.textContent = "No settings for this transform.";
+        return;
+      }
+      settingsHost.classList.remove("is-empty");
+      schema.forEach(function (field) {
+        const label = document.createElement("label");
+        label.className = "recipe-setting-field";
+
+        const title = document.createElement("span");
+        title.textContent = field.label;
+        label.appendChild(title);
+
+        let input;
+        if (field.type === "select") {
+          input = document.createElement("select");
+          (field.options || []).forEach(function (opt) {
+            const option = document.createElement("option");
+            option.value = opt.value;
+            option.textContent = opt.label;
+            input.appendChild(option);
+          });
+        } else {
+          input = document.createElement("input");
+          input.type = field.type || "text";
+          if (field.min !== undefined) {
+            input.min = String(field.min);
+          }
+          if (field.max !== undefined) {
+            input.max = String(field.max);
+          }
+          if (field.step !== undefined) {
+            input.step = String(field.step);
+          }
+          if (field.placeholder) {
+            input.placeholder = field.placeholder;
+          }
+        }
+
+        input.setAttribute("data-setting-key", field.key);
+        input.value = settings && settings[field.key] !== undefined ? String(settings[field.key]) : String(field.default || "");
+        label.appendChild(input);
+        settingsHost.appendChild(label);
+      });
+    }
+
+    function updateSelectionUI(stepEl) {
+      const modeSelect = stepEl.querySelector(".recipe-selection-mode");
+      const percentInput = stepEl.querySelector(".recipe-selection-percent");
+      const selectedWrap = stepEl.querySelector(".recipe-selected-wrap");
+      const selectionNote = stepEl.querySelector(".recipe-selection-note");
+      if (!modeSelect || !percentInput || !selectedWrap || !selectionNote) {
+        return;
+      }
+      const mode = modeSelect.value;
+      if (mode === "selected") {
+        percentInput.disabled = true;
+        selectedWrap.hidden = false;
+        selectionNote.textContent = "Percent ignored in Selected mode.";
+      } else {
+        percentInput.disabled = false;
+        selectedWrap.hidden = true;
+        selectionNote.textContent = "";
+      }
+    }
+
+    function moveStep(stepEl, direction) {
+      const target = direction < 0 ? stepEl.previousElementSibling : stepEl.nextElementSibling;
+      if (!target) {
+        return;
+      }
+      if (direction < 0) {
+        recipeListEl.insertBefore(stepEl, target);
+      } else {
+        recipeListEl.insertBefore(target, stepEl);
+      }
+    }
+
+    function addStep(initialStep) {
+      const step = initialStep || {};
+      const stepEl = document.createElement("article");
+      stepEl.className = "recipe-step-row";
+
+      const head = document.createElement("div");
+      head.className = "recipe-step-head";
+      const title = document.createElement("strong");
+      title.textContent = "Step";
+      head.appendChild(title);
+
+      const actions = document.createElement("div");
+      actions.className = "recipe-step-actions";
+
+      const upBtn = document.createElement("button");
+      upBtn.type = "button";
+      upBtn.className = "link-btn";
+      upBtn.textContent = "Up";
+      upBtn.addEventListener("click", function () { moveStep(stepEl, -1); });
+
+      const downBtn = document.createElement("button");
+      downBtn.type = "button";
+      downBtn.className = "link-btn";
+      downBtn.textContent = "Down";
+      downBtn.addEventListener("click", function () { moveStep(stepEl, 1); });
+
+      const duplicateBtn = document.createElement("button");
+      duplicateBtn.type = "button";
+      duplicateBtn.className = "link-btn";
+      duplicateBtn.textContent = "Duplicate";
+      duplicateBtn.addEventListener("click", function () {
+        addStep(serializeStep(stepEl));
+      });
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "link-btn link-btn-danger";
+      removeBtn.textContent = "Remove";
+      removeBtn.addEventListener("click", function () {
+        stepEl.remove();
+      });
+
+      [upBtn, downBtn, duplicateBtn, removeBtn].forEach(function (btn) {
+        actions.appendChild(btn);
+      });
+      head.appendChild(actions);
+      stepEl.appendChild(head);
+
+      const body = document.createElement("div");
+      body.className = "recipe-step-grid";
+
+      const transformLabel = document.createElement("label");
+      transformLabel.className = "recipe-field";
+      const transformTitle = document.createElement("span");
+      transformTitle.textContent = "Transform";
+      transformLabel.appendChild(transformTitle);
+      const transformSelect = buildTransformSelect(step.transform || "flip_h");
+      transformLabel.appendChild(transformSelect);
+      body.appendChild(transformLabel);
+
+      const modeLabel = document.createElement("label");
+      modeLabel.className = "recipe-field";
+      const modeTitle = document.createElement("span");
+      modeTitle.textContent = "Selection Mode";
+      modeLabel.appendChild(modeTitle);
+      const modeSelect = buildModeSelect(step.selection_mode || "fifo");
+      modeLabel.appendChild(modeSelect);
+      body.appendChild(modeLabel);
+
+      const percentLabel = document.createElement("label");
+      percentLabel.className = "recipe-field";
+      const percentTitle = document.createElement("span");
+      percentTitle.textContent = "Selection Percent";
+      percentLabel.appendChild(percentTitle);
+      const percentInput = document.createElement("input");
+      percentInput.type = "number";
+      percentInput.className = "recipe-selection-percent";
+      percentInput.min = "0";
+      percentInput.max = "100";
+      percentInput.step = "0.1";
+      percentInput.value = step.selection_percent !== undefined ? String(step.selection_percent) : "100";
+      percentLabel.appendChild(percentInput);
+      body.appendChild(percentLabel);
+
+      const note = document.createElement("div");
+      note.className = "recipe-selection-note muted";
+      body.appendChild(note);
+
+      const settingsWrap = document.createElement("div");
+      settingsWrap.className = "recipe-settings-wrap";
+      const settingsTitle = document.createElement("h4");
+      settingsTitle.textContent = "Settings";
+      settingsWrap.appendChild(settingsTitle);
+      const settingsHost = document.createElement("div");
+      settingsHost.className = "recipe-settings-host";
+      settingsWrap.appendChild(settingsHost);
+      body.appendChild(settingsWrap);
+
+      const selectedWrap = document.createElement("label");
+      selectedWrap.className = "recipe-selected-wrap";
+      selectedWrap.hidden = true;
+      const selectedTitle = document.createElement("span");
+      selectedTitle.textContent = "Selected Images (one name per line)";
+      selectedWrap.appendChild(selectedTitle);
+      const selectedInput = document.createElement("textarea");
+      selectedInput.className = "recipe-selected-images";
+      selectedInput.rows = 4;
+      selectedInput.placeholder = "image_001.png";
+      selectedInput.value = Array.isArray(step.selected_images) ? step.selected_images.join("\n") : "";
+      selectedWrap.appendChild(selectedInput);
+      body.appendChild(selectedWrap);
+
+      stepEl.appendChild(body);
+      recipeListEl.appendChild(stepEl);
+
+      renderSettings(stepEl, step.settings || {}, transformSelect.value);
+      updateSelectionUI(stepEl);
+
+      transformSelect.addEventListener("change", function () {
+        renderSettings(stepEl, {}, transformSelect.value);
+      });
+      modeSelect.addEventListener("change", function () {
+        updateSelectionUI(stepEl);
+      });
+    }
+
+    function serializeStep(stepEl) {
+      const transform = stepEl.querySelector(".recipe-transform").value;
+      const selectionMode = stepEl.querySelector(".recipe-selection-mode").value;
+      const percentRaw = stepEl.querySelector(".recipe-selection-percent").value;
+      const selectionPercent = Number.isFinite(parseFloat(percentRaw)) ? parseFloat(percentRaw) : 100;
+      const selectedText = stepEl.querySelector(".recipe-selected-images").value || "";
+      const selectedImages = selectedText
+        .replace(/,/g, "\n")
+        .split(/\r?\n/)
+        .map(function (item) { return item.trim(); })
+        .filter(function (item, idx, arr) { return item && arr.indexOf(item) === idx; });
+
+      const settings = {};
+      stepEl.querySelectorAll("[data-setting-key]").forEach(function (inputEl) {
+        const key = inputEl.getAttribute("data-setting-key");
+        if (!key) {
+          return;
+        }
+        const valueRaw = inputEl.value;
+        if (inputEl.tagName === "SELECT") {
+          settings[key] = valueRaw;
+          return;
+        }
+        if (inputEl.type === "number") {
+          const numeric = parseFloat(valueRaw);
+          settings[key] = Number.isFinite(numeric) ? numeric : 0;
+          return;
+        }
+        settings[key] = valueRaw;
+      });
+
+      return {
+        transform: transform,
+        selection_mode: selectionMode,
+        selection_percent: selectionPercent,
+        settings: settings,
+        selected_images: selectedImages,
+      };
+    }
+
+    function collectRecipe() {
+      const rows = Array.from(recipeListEl.querySelectorAll(".recipe-step-row"));
+      return rows.map(serializeStep);
+    }
+
+    addStepBtn.addEventListener("click", function () {
+      addStep({ transform: "flip_h", selection_mode: "fifo", selection_percent: 100, settings: {} });
+    });
+
+    formEl.addEventListener("submit", function (event) {
+      const recipe = collectRecipe();
+      if (!recipe.length && !includeOriginalEl.checked) {
+        event.preventDefault();
+        window.alert("Add at least one recipe step or enable include original.");
+        return;
+      }
+      recipeJsonInput.value = JSON.stringify(recipe);
+    });
+
+    const initialRecipeRaw = {{ (request.form.get('recipe_json', '') or '') | tojson }};
+    let initialRecipe = [];
+    if (initialRecipeRaw) {
+      try {
+        const parsed = JSON.parse(initialRecipeRaw);
+        if (Array.isArray(parsed)) {
+          initialRecipe = parsed;
+        }
+      } catch (err) {
+        initialRecipe = [];
+      }
+    }
+    if (!initialRecipe.length) {
+      initialRecipe = [{ transform: "flip_h", selection_mode: "fifo", selection_percent: 100, settings: {} }];
+    }
+    initialRecipe.forEach(addStep);
+  })();
+</script>
+{% endif %}
+{% endblock %}
