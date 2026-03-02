@@ -90,6 +90,71 @@
     return Number.isFinite(num) ? num : null;
   }
 
+  function readText(inputName) {
+    if (!form) {
+      return "";
+    }
+    var field = form.elements[inputName];
+    if (!field) {
+      return "";
+    }
+    return String(field.value || "").trim();
+  }
+
+  function parseCsvNumbers(raw, positiveOnly, integerOnly) {
+    var text = String(raw || "").trim();
+    if (!text) {
+      return [];
+    }
+    var tokens = text.split(",");
+    var parsed = [];
+    for (var i = 0; i < tokens.length; i += 1) {
+      var token = String(tokens[i] || "").trim();
+      if (!token) {
+        continue;
+      }
+      var number = Number(token);
+      if (!Number.isFinite(number)) {
+        return null;
+      }
+      if (integerOnly && !Number.isInteger(number)) {
+        return null;
+      }
+      if (positiveOnly && number <= 0) {
+        return null;
+      }
+      parsed.push(number);
+    }
+    return parsed;
+  }
+
+  function isChecked(fieldName) {
+    if (!form) {
+      return false;
+    }
+    var field = form.elements[fieldName];
+    return !!(field && field.checked);
+  }
+
+  function validateNamedCsv(name, positiveOnly, integerOnly, requiredWhenEnabled) {
+    var value = readText(name);
+    if (!value) {
+      if (requiredWhenEnabled) {
+        setFieldError(name, "Provide at least one value.");
+        return false;
+      }
+      setFieldError(name, "");
+      return true;
+    }
+    var parsed = parseCsvNumbers(value, positiveOnly, integerOnly);
+    if (!parsed || parsed.length < 1) {
+      setFieldError(name, "Use comma-separated numeric values.");
+      return false;
+    }
+    setFieldError(name, "");
+    return true;
+  }
+
   function featureInputs() {
     if (!form) {
       return [];
@@ -213,30 +278,135 @@
     }
 
     if (name === "gaussian_sigmas") {
-      if (!value) {
-        setFieldError(name, "Provide at least one sigma value.");
-        return false;
-      }
-      var isValid = /^(\d+(\.\d+)?)(\s*,\s*\d+(\.\d+)?)*$/.test(value);
-      if (!isValid) {
-        setFieldError(name, "Use comma-separated numeric values like 1.0,3.0.");
-        return false;
-      }
-      setFieldError(name, "");
-      return true;
+      return validateNamedCsv(name, true, false, true);
     }
 
-    if (name === "lbp_points" || name === "lbp_radius") {
+    if (name === "lbp_points" || name === "lbp_radii") {
       var useLbp = form.elements.use_lbp;
       if (useLbp && !useLbp.checked) {
         setFieldError(name, "");
         return true;
       }
-      var numeric = readNumber(name);
-      if (numeric === null || numeric < 1) {
-        setFieldError(name, "Must be >= 1 when LBP is enabled.");
+      if (name === "lbp_points") {
+        var numeric = readNumber(name);
+        if (numeric === null || numeric < 1) {
+          setFieldError(name, "Must be >= 1 when LBP is enabled.");
+          return false;
+        }
+        setFieldError(name, "");
+        return true;
+      }
+      var radii = parseCsvNumbers(readText("lbp_radii"), true, true);
+      if (!radii || radii.length < 1) {
+        setFieldError("lbp_radii", "Use comma-separated positive integers (for example 1,2,3).");
         return false;
       }
+      setFieldError("lbp_radii", "");
+      return true;
+    }
+
+    if (name === "gabor_frequencies" || name === "gabor_thetas" || name === "gabor_bandwidth") {
+      var useGabor = form.elements.use_gabor;
+      if (useGabor && !useGabor.checked) {
+        setFieldError(name, "");
+        return true;
+      }
+      if (name === "gabor_bandwidth") {
+        var bandwidth = readNumber("gabor_bandwidth");
+        if (bandwidth === null || bandwidth <= 0) {
+          setFieldError("gabor_bandwidth", "Must be > 0.");
+          return false;
+        }
+        setFieldError("gabor_bandwidth", "");
+        return true;
+      }
+      var listValid = validateNamedCsv(name, name === "gabor_frequencies", false, true);
+      if (!listValid) {
+        setFieldError(name, "Use comma-separated numeric values.");
+        return false;
+      }
+      return true;
+    }
+
+    if (name === "laws_vectors" || name === "laws_energy_window") {
+      var useLaws = form.elements.use_laws;
+      if (useLaws && !useLaws.checked) {
+        setFieldError(name, "");
+        return true;
+      }
+      if (name === "laws_energy_window") {
+        var lawsWindow = readNumber("laws_energy_window");
+        if (lawsWindow === null || lawsWindow < 1) {
+          setFieldError("laws_energy_window", "Must be >= 1.");
+          return false;
+        }
+        setFieldError("laws_energy_window", "");
+        return true;
+      }
+      var vectorsRaw = readText("laws_vectors");
+      if (!vectorsRaw) {
+        setFieldError("laws_vectors", "Provide one or more vectors (L5,E5,S5,R5,W5).");
+        return false;
+      }
+      var vectors = vectorsRaw.split(",").map(function (item) {
+        return String(item || "").trim().toUpperCase();
+      }).filter(function (item) {
+        return !!item;
+      });
+      var allowed = { L5: true, E5: true, S5: true, R5: true, W5: true };
+      if (!vectors.length || vectors.some(function (item) { return !allowed[item]; })) {
+        setFieldError("laws_vectors", "Allowed values: L5,E5,S5,R5,W5.");
+        return false;
+      }
+      setFieldError("laws_vectors", "");
+      return true;
+    }
+
+    if (name === "structure_tensor_sigma" || name === "structure_tensor_rho") {
+      var useStructure = form.elements.use_structure_tensor;
+      if (useStructure && !useStructure.checked) {
+        setFieldError(name, "");
+        return true;
+      }
+      if (name === "structure_tensor_sigma") {
+        var sigma = readNumber("structure_tensor_sigma");
+        if (sigma === null || sigma <= 0) {
+          setFieldError("structure_tensor_sigma", "Must be > 0.");
+          return false;
+        }
+        setFieldError("structure_tensor_sigma", "");
+        return true;
+      }
+      var rho = readNumber("structure_tensor_rho");
+      if (rho === null || rho < 0) {
+        setFieldError("structure_tensor_rho", "Must be >= 0.");
+        return false;
+      }
+      setFieldError("structure_tensor_rho", "");
+      return true;
+    }
+
+    if (name === "local_stats_sigmas") {
+      var useLocalStats = form.elements.use_multiscale_local_stats;
+      if (useLocalStats && !useLocalStats.checked) {
+        setFieldError(name, "");
+        return true;
+      }
+      return validateNamedCsv("local_stats_sigmas", true, false, true);
+    }
+
+    if (
+      name === "gabor_include_real" ||
+      name === "gabor_include_imag" ||
+      name === "gabor_include_magnitude" ||
+      name === "structure_tensor_include_eigenvalues" ||
+      name === "structure_tensor_include_coherence" ||
+      name === "structure_tensor_include_orientation" ||
+      name === "local_stats_include_mean" ||
+      name === "local_stats_include_std" ||
+      name === "local_stats_include_min" ||
+      name === "local_stats_include_max"
+    ) {
       setFieldError(name, "");
       return true;
     }
@@ -256,6 +426,58 @@
     return true;
   }
 
+  function validateFeatureComponentSelections() {
+    var valid = true;
+
+    if (isChecked("use_gabor")) {
+      var hasGaborComponent =
+        isChecked("gabor_include_real") ||
+        isChecked("gabor_include_imag") ||
+        isChecked("gabor_include_magnitude");
+      if (!hasGaborComponent) {
+        setFieldError("gabor_components", "Enable at least one Gabor response output.");
+        valid = false;
+      } else {
+        setFieldError("gabor_components", "");
+      }
+    } else {
+      setFieldError("gabor_components", "");
+    }
+
+    if (isChecked("use_structure_tensor")) {
+      var hasStructureOutput =
+        isChecked("structure_tensor_include_eigenvalues") ||
+        isChecked("structure_tensor_include_coherence") ||
+        isChecked("structure_tensor_include_orientation");
+      if (!hasStructureOutput) {
+        setFieldError("structure_tensor_outputs", "Enable at least one structure tensor output.");
+        valid = false;
+      } else {
+        setFieldError("structure_tensor_outputs", "");
+      }
+    } else {
+      setFieldError("structure_tensor_outputs", "");
+    }
+
+    if (isChecked("use_multiscale_local_stats")) {
+      var hasLocalStatsOutput =
+        isChecked("local_stats_include_mean") ||
+        isChecked("local_stats_include_std") ||
+        isChecked("local_stats_include_min") ||
+        isChecked("local_stats_include_max");
+      if (!hasLocalStatsOutput) {
+        setFieldError("local_stats_outputs", "Enable at least one local stats output.");
+        valid = false;
+      } else {
+        setFieldError("local_stats_outputs", "");
+      }
+    } else {
+      setFieldError("local_stats_outputs", "");
+    }
+
+    return valid;
+  }
+
   function validateForm() {
     if (!form) {
       return true;
@@ -271,7 +493,15 @@
       "validation_split",
       "gaussian_sigmas",
       "lbp_points",
-      "lbp_radius"
+      "lbp_radii",
+      "gabor_frequencies",
+      "gabor_thetas",
+      "gabor_bandwidth",
+      "laws_vectors",
+      "laws_energy_window",
+      "structure_tensor_sigma",
+      "structure_tensor_rho",
+      "local_stats_sigmas"
     ];
     var allValid = true;
     checks.forEach(function (name) {
@@ -280,6 +510,9 @@
       }
     });
     if (!validateFeatures()) {
+      allValid = false;
+    }
+    if (!validateFeatureComponentSelections()) {
       allValid = false;
     }
     return allValid;
@@ -322,6 +555,7 @@
         if (String(control.name || "").indexOf("use_") === 0) {
           validateFeatures();
         }
+        validateFeatureComponentSelections();
       });
       control.addEventListener("change", function () {
         if (control.name) {
@@ -330,6 +564,7 @@
         if (String(control.name || "").indexOf("use_") === 0) {
           validateFeatures();
         }
+        validateFeatureComponentSelections();
       });
     });
     form.addEventListener("submit", function (event) {
@@ -371,6 +606,7 @@
         }
         lockSubmitState(false);
         renderDatasetContext();
+        validateFeatureComponentSelections();
       });
     }
   }

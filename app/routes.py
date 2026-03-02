@@ -109,6 +109,16 @@ def _resolve_workspace(workspace_id: int | None = None) -> dict[str, Any]:
 def _workspace_redirect_target(workspace_id: int, raw_next: str) -> str:
     candidate = str(raw_next or "").strip()
     if candidate.startswith("/") and not candidate.startswith("//"):
+        # Keep users in the same section when switching workspaces, but avoid carrying
+        # stale resource IDs (dataset/model/run/image) that belong to another workspace.
+        if re.match(r"^/workspace/\d+/datasets/\d+(?:/|$)", candidate):
+            return url_for("main.workspace_datasets", workspace_id=workspace_id)
+        if re.match(r"^/workspace/\d+/registered-datasets/\d+(?:/|$)", candidate):
+            return url_for("main.workspace_datasets", workspace_id=workspace_id)
+        if re.match(r"^/workspace/\d+/models/\d+(?:/|$)", candidate):
+            return url_for("main.workspace_models", workspace_id=workspace_id)
+        if re.match(r"^/workspace/\d+/analysis/\d+(?:/|$)", candidate):
+            return url_for("main.workspace_analysis", workspace_id=workspace_id)
         if re.match(r"^/workspace/\d+", candidate):
             return re.sub(r"^/workspace/\d+", f"/workspace/{workspace_id}", candidate, count=1)
     return url_for("main.workspace_dashboard", workspace_id=workspace_id)

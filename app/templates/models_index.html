@@ -163,13 +163,65 @@
             <label><input type="checkbox" name="use_lab" checked> LAB</label>
             <label><input type="checkbox" name="use_sobel" checked> Sobel</label>
             <label><input type="checkbox" name="use_lbp"> LBP</label>
+            <label><input type="checkbox" name="use_gabor"> Gabor</label>
+            <label><input type="checkbox" name="use_laws"> Laws</label>
+            <label><input type="checkbox" name="use_structure_tensor"> Structure Tensor</label>
+            <label><input type="checkbox" name="use_multiscale_local_stats"> Multi-scale Local Stats</label>
           </div>
           <span class="field-error" data-error-for="feature_flags"></span>
           <div class="models-form-grid">
             <label>gaussian_sigmas (comma-separated)<input type="text" name="gaussian_sigmas" value="1.0,3.0"><span class="field-error" data-error-for="gaussian_sigmas"></span></label>
             <label>lbp_points<input type="number" name="lbp_points" min="1" value="8"><span class="field-error" data-error-for="lbp_points"></span></label>
-            <label>lbp_radius<input type="number" name="lbp_radius" min="1" value="1"><span class="field-error" data-error-for="lbp_radius"></span></label>
+            <label>lbp_radii (comma-separated)<input type="text" name="lbp_radii" value="1"><span class="field-error" data-error-for="lbp_radii"></span></label>
           </div>
+
+          <h5>Gabor Filter Bank</h5>
+          <div class="models-form-grid">
+            <label>gabor_frequencies (comma-separated)<input type="text" name="gabor_frequencies" value="0.1,0.2"><span class="field-error" data-error-for="gabor_frequencies"></span></label>
+            <label>gabor_thetas degrees (comma-separated)<input type="text" name="gabor_thetas" value="0,45,90,135"><span class="field-error" data-error-for="gabor_thetas"></span></label>
+            <label>gabor_bandwidth<input type="number" step="0.1" min="0.1" name="gabor_bandwidth" value="1.0"><span class="field-error" data-error-for="gabor_bandwidth"></span></label>
+          </div>
+          <div class="inline-options">
+            <label><input type="checkbox" name="gabor_include_real"> real</label>
+            <label><input type="checkbox" name="gabor_include_imag"> imag</label>
+            <label><input type="checkbox" name="gabor_include_magnitude" checked> magnitude</label>
+          </div>
+          <span class="field-error" data-error-for="gabor_components"></span>
+
+          <h5>Laws Texture Energy</h5>
+          <div class="models-form-grid">
+            <label>laws_vectors (subset of L5,E5,S5,R5,W5)<input type="text" name="laws_vectors" value="L5,E5,S5,R5,W5"><span class="field-error" data-error-for="laws_vectors"></span></label>
+            <label>laws_energy_window<input type="number" min="1" name="laws_energy_window" value="15"><span class="field-error" data-error-for="laws_energy_window"></span></label>
+          </div>
+          <div class="inline-options">
+            <label><input type="checkbox" name="laws_include_l5l5"> include L5L5</label>
+            <label><input type="checkbox" name="laws_include_rotations"> include rotations</label>
+            <label><input type="checkbox" name="laws_use_abs" checked> abs response energy</label>
+          </div>
+
+          <h5>Structure Tensor</h5>
+          <div class="models-form-grid">
+            <label>structure_tensor_sigma<input type="number" step="0.1" min="0.1" name="structure_tensor_sigma" value="1.0"><span class="field-error" data-error-for="structure_tensor_sigma"></span></label>
+            <label>structure_tensor_rho<input type="number" step="0.1" min="0" name="structure_tensor_rho" value="3.0"><span class="field-error" data-error-for="structure_tensor_rho"></span></label>
+          </div>
+          <div class="inline-options">
+            <label><input type="checkbox" name="structure_tensor_include_eigenvalues" checked> eigenvalues</label>
+            <label><input type="checkbox" name="structure_tensor_include_coherence" checked> coherence</label>
+            <label><input type="checkbox" name="structure_tensor_include_orientation" checked> orientation</label>
+          </div>
+          <span class="field-error" data-error-for="structure_tensor_outputs"></span>
+
+          <h5>Multi-scale Local Stats (Grayscale)</h5>
+          <div class="models-form-grid">
+            <label>local_stats_sigmas (comma-separated)<input type="text" name="local_stats_sigmas" value="1.0,3.0,5.0"><span class="field-error" data-error-for="local_stats_sigmas"></span></label>
+          </div>
+          <div class="inline-options">
+            <label><input type="checkbox" name="local_stats_include_mean" checked> mean</label>
+            <label><input type="checkbox" name="local_stats_include_std" checked> std</label>
+            <label><input type="checkbox" name="local_stats_include_min"> min</label>
+            <label><input type="checkbox" name="local_stats_include_max"> max</label>
+          </div>
+          <span class="field-error" data-error-for="local_stats_outputs"></span>
         </div></details>
 
         <p class="models-form-error" id="train-form-error" hidden></p>
