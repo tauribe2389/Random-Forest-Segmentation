@@ -270,7 +270,7 @@
           </p>
         </div>
         <div class="form-actions analysis-form-actions">
-          <button type="submit" id="analysis-run-button" {% if not workspace_images or not selected_images or not selected_model %}disabled{% endif %}>Run Analysis</button>
+          <button type="submit" id="analysis-run-button" {% if not workspace_images or not selected_images or not selected_model %}disabled{% endif %}>Queue Analysis Job</button>
           <a class="link-btn" href="{{ url_for('main.workspace_analysis', workspace_id=workspace.id) }}">Cancel</a>
         </div>
       </section>

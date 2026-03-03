@@ -523,7 +523,7 @@
       return;
     }
     submitButton.disabled = !!isSubmitting;
-    submitButton.textContent = isSubmitting ? "Training..." : "Train Model";
+    submitButton.textContent = isSubmitting ? "Queueing..." : "Queue Training Job";
     form.setAttribute("data-submitting", isSubmitting ? "true" : "false");
   }
 
@@ -648,6 +648,134 @@
   var activeIndex = -1;
   var anchorIndex = -1;
   var sortState = { key: "created", direction: "desc" };
+  var jobsPollUrl = String(table.getAttribute("data-jobs-poll-url") || "");
+  var knownJobStatuses = {};
+  var hasJobPollInitialized = false;
+
+  function statusClass(statusText) {
+    var key = lower(statusText);
+    if (key === "trained" || key === "completed" || key === "success") {
+      return "is-good";
+    }
+    if (key === "queued" || key === "running" || key === "training" || key === "cancel_requested") {
+      return "is-progress";
+    }
+    if (key === "failed" || key === "error" || key === "canceled") {
+      return "is-bad";
+    }
+    return "is-neutral";
+  }
+
+  function stageLabel(stageText) {
+    var text = String(stageText || "").trim();
+    if (!text) {
+      return "";
+    }
+    return text.replace(/_/g, " ");
+  }
+
+  function showToast(message, category) {
+    var wrap = doc.querySelector(".wrap");
+    if (!wrap) {
+      return;
+    }
+    var el = doc.createElement("div");
+    el.className = "flash " + (category || "success");
+    el.setAttribute("data-flash", "");
+    el.setAttribute("data-duration", "4200");
+    el.textContent = String(message || "");
+    wrap.insertBefore(el, wrap.firstChild);
+    window.setTimeout(function () {
+      el.classList.add("hide");
+      window.setTimeout(function () {
+        if (el.parentNode) {
+          el.parentNode.removeChild(el);
+        }
+      }, 420);
+    }, 4200);
+  }
+
+  function updateRowStatusFromJob(job) {
+    if (String(job.entity_type || "").toLowerCase() !== "model") {
+      return;
+    }
+    var modelId = Number(job.entity_id);
+    if (!Number.isInteger(modelId) || modelId <= 0) {
+      return;
+    }
+    var row = table.querySelector('tr.model-row[data-model-id="' + String(modelId) + '"]');
+    if (!row) {
+      return;
+    }
+    var statusKey = lower(job.status);
+    var label = String(job.status || "");
+    var stage = stageLabel(job.stage);
+    if ((statusKey === "running" || statusKey === "queued") && stage && stage !== statusKey) {
+      label = String(job.status || "") + " (" + stage + ")";
+    }
+    row.setAttribute("data-status", statusKey);
+    row.setAttribute("data-status-label", label);
+    var pill = row.querySelector(".status-pill");
+    if (pill) {
+      pill.classList.remove("is-good", "is-progress", "is-bad", "is-neutral");
+      pill.classList.add(statusClass(statusKey));
+      pill.textContent = label;
+    }
+  }
+
+  function pollTrainingJobs() {
+    if (!jobsPollUrl) {
+      return;
+    }
+    var url = jobsPollUrl + (jobsPollUrl.indexOf("?") >= 0 ? "&" : "?") + "limit=120";
+    fetch(url, {
+      headers: {
+        "X-Requested-With": "XMLHttpRequest"
+      }
+    })
+      .then(function (response) {
+        if (!response.ok) {
+          throw new Error("poll failed");
+        }
+        return response.json();
+      })
+      .then(function (payload) {
+        var jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
+        var nextKnown = {};
+        jobs.forEach(function (job) {
+          var jobId = Number(job.id);
+          if (!Number.isInteger(jobId) || jobId <= 0) {
+            return;
+          }
+          var nextStatus = lower(job.status);
+          nextKnown[jobId] = nextStatus;
+          updateRowStatusFromJob(job);
+          if (!hasJobPollInitialized) {
+            return;
+          }
+          var previous = lower(knownJobStatuses[jobId] || "");
+          if (!previous || previous === nextStatus) {
+            return;
+          }
+          if (nextStatus === "running") {
+            showToast("Training job #" + String(jobId) + " started.", "success");
+          } else if (nextStatus === "completed") {
+            showToast("Training job #" + String(jobId) + " completed.", "success");
+          } else if (nextStatus === "failed") {
+            showToast("Training job #" + String(jobId) + " failed.", "error");
+          } else if (nextStatus === "canceled") {
+            showToast("Training job #" + String(jobId) + " canceled.", "warning");
+          }
+        });
+        knownJobStatuses = nextKnown;
+        hasJobPollInitialized = true;
+        populateFilters();
+        applyFilters();
+      })
+      .catch(function () {
+        // Ignore transient polling failures.
+      });
+  }
 
   function visibleRows() {
     return rows.filter(function (row) {
@@ -751,6 +879,14 @@
   function populateFilters() {
     var statuses = {};
     var datasets = {};
+    var currentStatus = statusFilter ? String(statusFilter.value || "") : "";
+    var currentDataset = datasetFilter ? String(datasetFilter.value || "") : "";
+    if (statusFilter) {
+      statusFilter.innerHTML = '<option value="">All statuses</option>';
+    }
+    if (datasetFilter) {
+      datasetFilter.innerHTML = '<option value="">All datasets</option>';
+    }
     rows.forEach(function (row) {
       var statusKey = lower(row.getAttribute("data-status"));
       var statusLabel = String(row.getAttribute("data-status-label") || statusKey);
@@ -775,6 +911,12 @@
       option.textContent = datasets[dataset];
       datasetFilter.appendChild(option);
     });
+    if (statusFilter && currentStatus) {
+      statusFilter.value = currentStatus;
+    }
+    if (datasetFilter && currentDataset) {
+      datasetFilter.value = currentDataset;
+    }
   }
 
   function sortRows(key, direction) {
@@ -983,4 +1125,11 @@
   populateFilters();
   sortRows(sortState.key, sortState.direction);
   updateSelectionPills();
+  pollTrainingJobs();
+  window.setInterval(function () {
+    if (doc.hidden) {
+      return;
+    }
+    pollTrainingJobs();
+  }, 10000);
 })();

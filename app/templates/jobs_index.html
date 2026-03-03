@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Jobs - {{ workspace.name }}{% endblock %}
+{% block content %}
+<section class="panel models-page-head">
+  <div class="models-page-head-row">
+    <div>
+      <h2>Jobs</h2>
+      <p class="muted">Global FIFO queue across all workspaces. This page shows jobs for {{ workspace.name }}.</p>
+    </div>
+    <div class="models-page-head-actions">
+      <a class="secondary" href="{{ url_for('main.workspace_models', workspace_id=workspace.id) }}">Open Models</a>
+      <a class="secondary" href="{{ url_for('main.workspace_analysis', workspace_id=workspace.id) }}">Open Analysis</a>
+    </div>
+  </div>
+</section>
+
+<section class="panel models-library-panel">
+  {% if jobs %}
+    <div class="table-wrap">
+      <table
+        id="jobs-table"
+        class="models-table datasets-table"
+        data-jobs-poll-url="{{ jobs_poll_url }}"
+        data-jobs-reorder-url="{{ jobs_reorder_url }}"
+      >
+        <thead>
+          <tr>
+            <th>Queue</th>
+            <th>Job</th>
+            <th>Type</th>
+            <th>Target</th>
+            <th>Created</th>
+            <th>Status</th>
+            <th>Stage</th>
+            <th>Progress</th>
+            <th>Last Log</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for job in jobs %}
+            <tr
+              class="job-row {% if job.status == 'queued' %}is-queue-row{% endif %}"
+              data-job-id="{{ job.id }}"
+              data-status="{{ job.status }}"
+              data-job-type="{{ job.job_type }}"
+              data-queue-position="{{ job.queue_position or '' }}"
+              data-entity-type="{{ job.entity_type }}"
+              data-entity-id="{{ job.entity_id }}"
+              {% if job.status == 'queued' %}draggable="true"{% endif %}
+            >
+              <td class="job-queue-col">
+                {% if job.status == "queued" %}
+                  <span class="queue-chip">#{{ job.queue_position }}</span>
+                {% else %}
+                  <span class="muted">-</span>
+                {% endif %}
+              </td>
+              <td>
+                <div class="model-name">Job #{{ job.id }}</div>
+                {% if job.rerun_of_job_id %}
+                  <div class="model-meta muted">Rerun of #{{ job.rerun_of_job_id }}</div>
+                {% endif %}
+              </td>
+              <td>{{ job.job_type_label }}</td>
+              <td>
+                {% if job.target_url %}
+                  <a href="{{ job.target_url }}">{{ job.target_label }}</a>
+                {% else %}
+                  {{ job.target_label }}
+                {% endif %}
+              </td>
+              <td><time datetime="{{ job.created_at }}" title="{{ job.created_at }}">{{ job.created_at|human_datetime }}</time></td>
+              <td><span class="status-pill {{ job.status_class }}">{{ job.status }}</span></td>
+              <td class="job-stage">{{ job.stage_label }}</td>
+              <td class="job-progress">
+                <div class="job-progress-wrap">
+                  <progress max="100" value="{{ job.progress_percent }}"></progress>
+                  <span>{{ "%.0f"|format(job.progress_percent) }}%</span>
+                </div>
+              </td>
+              <td class="job-last-log">{{ job.last_log or "-" }}</td>
+              <td>
+                <div class="table-action-row">
+                  {% if job.target_url %}
+                    <a class="table-action-btn" href="{{ job.target_url }}">
+                      <span class="table-action-icon" aria-hidden="true">&#8599;</span>
+                      <span>Open</span>
+                    </a>
+                  {% endif %}
+                  {% if job.can_cancel %}
+                    <form method="post" action="{{ url_for('main.workspace_job_cancel', workspace_id=workspace.id, job_id=job.id) }}">
+                      <button type="submit" class="table-action-btn secondary">Cancel</button>
+                    </form>
+                  {% endif %}
+                  {% if job.can_rerun %}
+                    <form method="post" action="{{ url_for('main.workspace_job_rerun', workspace_id=workspace.id, job_id=job.id) }}">
+                      <button type="submit" class="table-action-btn secondary">Re-run</button>
+                    </form>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty-state">
+      <h3>No jobs yet</h3>
+      <p class="muted">Queue model training, analysis, or SLIC warmup jobs to monitor progress here.</p>
+      <a class="primary-btn" href="{{ url_for('main.workspace_models', workspace_id=workspace.id) }}">Go to Models</a>
+    </div>
+  {% endif %}
+</section>
+<script src="{{ url_for('static', filename='jobs_page.js') }}"></script>
+{% endblock %}

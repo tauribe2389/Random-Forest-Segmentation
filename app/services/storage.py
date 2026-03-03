@@ -17,6 +17,9 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+_UNSET = object()
+
+
 class Storage:
     """Simple SQLite registry for app entities."""
 
@@ -127,6 +130,31 @@ class Storage:
             area_delta_json TEXT,
             postprocess_applied INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (run_id) REFERENCES analysis_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            job_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            progress REAL NOT NULL DEFAULT 0.0,
+            logs_json TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            dedupe_key TEXT,
+            priority INTEGER NOT NULL DEFAULT 0,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            heartbeat_at TEXT,
+            worker_id TEXT,
+            error_message TEXT,
+            entity_type TEXT,
+            entity_id INTEGER,
+            result_ref_type TEXT,
+            result_ref_id INTEGER,
+            rerun_of_job_id INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS labeler_projects (
@@ -392,9 +420,139 @@ class Storage:
                 column_name="slic_colorspace",
                 definition="TEXT NOT NULL DEFAULT 'lab'",
             )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="workspace_id",
+                definition="INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="job_type",
+                definition="TEXT NOT NULL DEFAULT 'training'",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="status",
+                definition="TEXT NOT NULL DEFAULT 'queued'",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="stage",
+                definition="TEXT NOT NULL DEFAULT 'queued'",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="progress",
+                definition="REAL NOT NULL DEFAULT 0.0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="logs_json",
+                definition="TEXT NOT NULL DEFAULT '[]'",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="payload_json",
+                definition="TEXT NOT NULL DEFAULT '{}'",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="dedupe_key",
+                definition="TEXT",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="priority",
+                definition="INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="cancel_requested",
+                definition="INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="created_at",
+                definition="TEXT",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="started_at",
+                definition="TEXT",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="finished_at",
+                definition="TEXT",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="heartbeat_at",
+                definition="TEXT",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="worker_id",
+                definition="TEXT",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="error_message",
+                definition="TEXT",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="entity_type",
+                definition="TEXT",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="entity_id",
+                definition="INTEGER",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="result_ref_type",
+                definition="TEXT",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="result_ref_id",
+                definition="INTEGER",
+            )
+            self._ensure_column(
+                conn,
+                table_name="jobs",
+                column_name="rerun_of_job_id",
+                definition="INTEGER",
+            )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_datasets_workspace_id ON datasets(workspace_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_models_workspace_id ON models(workspace_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_runs_workspace_id ON analysis_runs(workspace_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_workspace_id ON jobs(workspace_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON jobs(status, priority, id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at, id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_dedupe_status ON jobs(dedupe_key, status)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_labeler_projects_kind ON labeler_projects(kind)")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_labeler_projects_parent_workspace ON labeler_projects(parent_workspace_id)"
@@ -456,6 +614,13 @@ class Storage:
                 )
             conn.execute("UPDATE analysis_runs SET postprocess_enabled = 0 WHERE postprocess_enabled IS NULL")
             conn.execute("UPDATE analysis_run_items SET postprocess_applied = 0 WHERE postprocess_applied IS NULL")
+            conn.execute("UPDATE jobs SET status = 'queued' WHERE status IS NULL OR status = ''")
+            conn.execute("UPDATE jobs SET stage = status WHERE stage IS NULL OR stage = ''")
+            conn.execute("UPDATE jobs SET progress = 0.0 WHERE progress IS NULL")
+            conn.execute("UPDATE jobs SET logs_json = '[]' WHERE logs_json IS NULL OR logs_json = ''")
+            conn.execute("UPDATE jobs SET payload_json = '{}' WHERE payload_json IS NULL OR payload_json = ''")
+            conn.execute("UPDATE jobs SET cancel_requested = 0 WHERE cancel_requested IS NULL")
+            conn.execute("UPDATE jobs SET created_at = ? WHERE created_at IS NULL OR created_at = ''", (_utc_now_iso(),))
             conn.commit()
 
     @staticmethod
@@ -601,6 +766,71 @@ class Storage:
             cursor = conn.execute(sql, payload)
             conn.commit()
             return int(cursor.lastrowid)
+
+    def update_model(
+        self,
+        model_id: int,
+        *,
+        status: str | None = None,
+        error_message: str | None | object = _UNSET,
+        classes: list[dict[str, Any]] | None = None,
+        feature_config: dict[str, Any] | None = None,
+        hyperparams: dict[str, Any] | None = None,
+        metrics: dict[str, Any] | None = None,
+        artifact_dir: str | None = None,
+        model_path: str | None = None,
+        metadata_path: str | None = None,
+        workspace_id: int | None = None,
+    ) -> None:
+        assignments: list[str] = []
+        payload: list[Any] = []
+        if status is not None:
+            assignments.append("status = ?")
+            payload.append(status)
+        if error_message is not _UNSET:
+            assignments.append("error_message = ?")
+            payload.append(error_message)
+        if classes is not None:
+            assignments.append("classes_json = ?")
+            payload.append(json.dumps(classes))
+        if feature_config is not None:
+            assignments.append("feature_config_json = ?")
+            payload.append(json.dumps(feature_config))
+        if hyperparams is not None:
+            assignments.append("hyperparams_json = ?")
+            payload.append(json.dumps(hyperparams))
+        if metrics is not None:
+            assignments.append("metrics_json = ?")
+            payload.append(json.dumps(metrics))
+        if artifact_dir is not None:
+            assignments.append("artifact_dir = ?")
+            payload.append(artifact_dir)
+        if model_path is not None:
+            assignments.append("model_path = ?")
+            payload.append(model_path)
+        if metadata_path is not None:
+            assignments.append("metadata_path = ?")
+            payload.append(metadata_path)
+        if not assignments:
+            return
+
+        if workspace_id is None:
+            sql = f"""
+            UPDATE models
+            SET {", ".join(assignments)}
+            WHERE id = ?
+            """
+            payload.append(model_id)
+        else:
+            sql = f"""
+            UPDATE models
+            SET {", ".join(assignments)}
+            WHERE id = ? AND workspace_id = ?
+            """
+            payload.extend((model_id, workspace_id))
+        with self._connect() as conn:
+            conn.execute(sql, tuple(payload))
+            conn.commit()
 
     def list_models(self, workspace_id: int | None = None) -> list[dict[str, Any]]:
         if workspace_id is None:
@@ -766,6 +996,37 @@ class Storage:
             conn.execute(sql, tuple(payload))
             conn.commit()
 
+    def update_analysis_run_state(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        error_message: str | None | object = _UNSET,
+        workspace_id: int | None = None,
+    ) -> None:
+        assignments = ["status = ?"]
+        payload: list[Any] = [status]
+        if error_message is not _UNSET:
+            assignments.append("error_message = ?")
+            payload.append(error_message)
+        if workspace_id is None:
+            sql = f"""
+            UPDATE analysis_runs
+            SET {", ".join(assignments)}
+            WHERE id = ?
+            """
+            payload.append(run_id)
+        else:
+            sql = f"""
+            UPDATE analysis_runs
+            SET {", ".join(assignments)}
+            WHERE id = ? AND workspace_id = ?
+            """
+            payload.extend((run_id, workspace_id))
+        with self._connect() as conn:
+            conn.execute(sql, tuple(payload))
+            conn.commit()
+
     def add_analysis_item(
         self,
         *,
@@ -888,6 +1149,567 @@ class Storage:
         with self._connect() as conn:
             rows = conn.execute(sql, (run_id,)).fetchall()
         return [self._decode_json_fields(dict(row)) for row in rows]
+
+    @staticmethod
+    def _clamp_progress(value: float | int | None) -> float:
+        if value is None:
+            return 0.0
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            numeric = 0.0
+        if numeric < 0:
+            return 0.0
+        if numeric > 1:
+            return 1.0
+        return numeric
+
+    @staticmethod
+    def _next_queue_priority(conn: sqlite3.Connection) -> int:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(priority), 0) AS max_priority FROM jobs WHERE status = 'queued'"
+        ).fetchone()
+        max_priority = int(row["max_priority"]) if row is not None and row["max_priority"] is not None else 0
+        return max_priority + 10
+
+    def enqueue_job(
+        self,
+        *,
+        workspace_id: int,
+        job_type: str,
+        payload: dict[str, Any],
+        dedupe_key: str | None = None,
+        entity_type: str | None = None,
+        entity_id: int | None = None,
+        rerun_of_job_id: int | None = None,
+    ) -> tuple[int, bool]:
+        created_at = _utc_now_iso()
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if dedupe_key:
+                existing = conn.execute(
+                    """
+                    SELECT id
+                    FROM jobs
+                    WHERE dedupe_key = ? AND status IN ('queued', 'running')
+                    ORDER BY id ASC
+                    LIMIT 1
+                    """,
+                    (dedupe_key,),
+                ).fetchone()
+                if existing is not None:
+                    conn.commit()
+                    return int(existing["id"]), False
+            priority = self._next_queue_priority(conn)
+            cursor = conn.execute(
+                """
+                INSERT INTO jobs (
+                    workspace_id, job_type, status, stage, progress, logs_json, payload_json,
+                    dedupe_key, priority, cancel_requested, created_at, started_at, finished_at,
+                    heartbeat_at, worker_id, error_message, entity_type, entity_id, result_ref_type,
+                    result_ref_id, rerun_of_job_id
+                )
+                VALUES (?, ?, 'queued', 'queued', ?, ?, ?, ?, ?, 0, ?, NULL, NULL, ?, NULL, NULL, ?, ?, NULL, NULL, ?)
+                """,
+                (
+                    workspace_id,
+                    str(job_type or "").strip().lower(),
+                    0.0,
+                    json.dumps([]),
+                    json.dumps(payload),
+                    dedupe_key,
+                    priority,
+                    created_at,
+                    created_at,
+                    entity_type,
+                    entity_id,
+                    rerun_of_job_id,
+                ),
+            )
+            conn.commit()
+            return int(cursor.lastrowid), True
+
+    def find_active_job_by_dedupe(
+        self,
+        *,
+        dedupe_key: str,
+        workspace_id: int | None = None,
+        job_type: str | None = None,
+    ) -> dict[str, Any] | None:
+        where = ["dedupe_key = ?", "status IN ('queued', 'running')"]
+        params: list[Any] = [dedupe_key]
+        if workspace_id is not None:
+            where.append("workspace_id = ?")
+            params.append(workspace_id)
+        if job_type is not None:
+            where.append("job_type = ?")
+            params.append(str(job_type).strip().lower())
+        sql = f"""
+        SELECT *
+        FROM jobs
+        WHERE {" AND ".join(where)}
+        ORDER BY id ASC
+        LIMIT 1
+        """
+        with self._connect() as conn:
+            row = conn.execute(sql, tuple(params)).fetchone()
+        if row is None:
+            return None
+        return self._decode_json_fields(dict(row))
+
+    def get_job(self, job_id: int, *, workspace_id: int | None = None) -> dict[str, Any] | None:
+        if workspace_id is None:
+            sql = "SELECT * FROM jobs WHERE id = ?"
+            params: tuple[Any, ...] = (job_id,)
+        else:
+            sql = "SELECT * FROM jobs WHERE id = ? AND workspace_id = ?"
+            params = (job_id, workspace_id)
+        with self._connect() as conn:
+            row = conn.execute(sql, params).fetchone()
+        if row is None:
+            return None
+        return self._decode_json_fields(dict(row))
+
+    def list_jobs(
+        self,
+        *,
+        workspace_id: int | None = None,
+        limit: int = 200,
+        job_type: str | None = None,
+        statuses: list[str] | tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]:
+        where: list[str] = []
+        params: list[Any] = []
+        if workspace_id is not None:
+            where.append("workspace_id = ?")
+            params.append(workspace_id)
+        if job_type is not None:
+            where.append("job_type = ?")
+            params.append(str(job_type).strip().lower())
+        if statuses:
+            normalized = [str(item).strip().lower() for item in statuses if str(item).strip()]
+            if normalized:
+                placeholders = ", ".join("?" for _ in normalized)
+                where.append(f"status IN ({placeholders})")
+                params.extend(normalized)
+        sql = "SELECT * FROM jobs"
+        if where:
+            sql += f" WHERE {' AND '.join(where)}"
+        sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(max(1, int(limit)))
+        with self._connect() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
+        return [self._decode_json_fields(dict(row)) for row in rows]
+
+    def list_queued_jobs(self, *, limit: int = 500) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM jobs
+                WHERE status = 'queued'
+                ORDER BY
+                    CASE
+                        WHEN job_type IN ('training', 'analysis') THEN 0
+                        WHEN job_type = 'slic_warmup' THEN 1
+                        ELSE 2
+                    END ASC,
+                    priority ASC,
+                    created_at ASC,
+                    id ASC
+                LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [self._decode_json_fields(dict(row)) for row in rows]
+
+    def list_running_jobs(self, *, limit: int = 500) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM jobs
+                WHERE status = 'running'
+                ORDER BY started_at ASC, id ASC
+                LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [self._decode_json_fields(dict(row)) for row in rows]
+
+    def claim_next_queued_job(self, *, worker_id: str) -> dict[str, Any] | None:
+        now = _utc_now_iso()
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """
+                SELECT id
+                FROM jobs
+                WHERE status = 'queued' AND cancel_requested = 0
+                ORDER BY
+                    CASE
+                        WHEN job_type IN ('training', 'analysis') THEN 0
+                        WHEN job_type = 'slic_warmup' THEN 1
+                        ELSE 2
+                    END ASC,
+                    priority ASC,
+                    created_at ASC,
+                    id ASC
+                LIMIT 1
+                """
+            ).fetchone()
+            if row is None:
+                conn.commit()
+                return None
+            job_id = int(row["id"])
+            conn.execute(
+                """
+                UPDATE jobs
+                SET
+                    status = 'running',
+                    stage = CASE
+                        WHEN stage IS NULL OR stage = '' OR stage = 'queued' THEN 'starting'
+                        ELSE stage
+                    END,
+                    progress = CASE
+                        WHEN progress < 0.01 THEN 0.01
+                        ELSE progress
+                    END,
+                    started_at = COALESCE(started_at, ?),
+                    heartbeat_at = ?,
+                    worker_id = ?,
+                    error_message = NULL
+                WHERE id = ? AND status = 'queued'
+                """,
+                (now, now, worker_id, job_id),
+            )
+            claimed = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            conn.commit()
+        if claimed is None:
+            return None
+        return self._decode_json_fields(dict(claimed))
+
+    def update_job(
+        self,
+        job_id: int,
+        *,
+        status: str | None = None,
+        stage: str | None = None,
+        progress: float | None = None,
+        error_message: str | None | object = _UNSET,
+        cancel_requested: bool | None = None,
+        worker_id: str | None = None,
+        result_ref_type: str | None = None,
+        result_ref_id: int | None = None,
+        finished: bool = False,
+        heartbeat: bool = False,
+        workspace_id: int | None = None,
+    ) -> None:
+        assignments: list[str] = []
+        payload: list[Any] = []
+        now = _utc_now_iso()
+        if status is not None:
+            assignments.append("status = ?")
+            payload.append(str(status).strip().lower())
+        if stage is not None:
+            assignments.append("stage = ?")
+            payload.append(str(stage).strip().lower())
+        if progress is not None:
+            assignments.append("progress = ?")
+            payload.append(self._clamp_progress(progress))
+        if error_message is not _UNSET:
+            assignments.append("error_message = ?")
+            payload.append(error_message)
+        if cancel_requested is not None:
+            assignments.append("cancel_requested = ?")
+            payload.append(1 if cancel_requested else 0)
+        if worker_id is not None:
+            assignments.append("worker_id = ?")
+            payload.append(worker_id)
+        if result_ref_type is not None:
+            assignments.append("result_ref_type = ?")
+            payload.append(result_ref_type)
+        if result_ref_id is not None:
+            assignments.append("result_ref_id = ?")
+            payload.append(int(result_ref_id))
+        if finished:
+            assignments.append("finished_at = ?")
+            payload.append(now)
+        if heartbeat:
+            assignments.append("heartbeat_at = ?")
+            payload.append(now)
+        if not assignments:
+            return
+        if workspace_id is None:
+            sql = f"""
+            UPDATE jobs
+            SET {", ".join(assignments)}
+            WHERE id = ?
+            """
+            payload.append(job_id)
+        else:
+            sql = f"""
+            UPDATE jobs
+            SET {", ".join(assignments)}
+            WHERE id = ? AND workspace_id = ?
+            """
+            payload.extend((job_id, workspace_id))
+        with self._connect() as conn:
+            conn.execute(sql, tuple(payload))
+            conn.commit()
+
+    def append_job_log(
+        self,
+        job_id: int,
+        *,
+        message: str,
+        stage: str | None = None,
+        progress: float | None = None,
+        workspace_id: int | None = None,
+    ) -> None:
+        now = _utc_now_iso()
+        if workspace_id is None:
+            select_sql = "SELECT logs_json FROM jobs WHERE id = ?"
+            select_params: tuple[Any, ...] = (job_id,)
+            where_clause = "id = ?"
+            where_params: tuple[Any, ...] = (job_id,)
+        else:
+            select_sql = "SELECT logs_json FROM jobs WHERE id = ? AND workspace_id = ?"
+            select_params = (job_id, workspace_id)
+            where_clause = "id = ? AND workspace_id = ?"
+            where_params = (job_id, workspace_id)
+        with self._connect() as conn:
+            row = conn.execute(select_sql, select_params).fetchone()
+            if row is None:
+                return
+            raw_logs = row["logs_json"]
+            logs: list[dict[str, Any]]
+            if isinstance(raw_logs, str):
+                try:
+                    parsed = json.loads(raw_logs)
+                    logs = parsed if isinstance(parsed, list) else []
+                except json.JSONDecodeError:
+                    logs = []
+            elif isinstance(raw_logs, list):
+                logs = raw_logs
+            else:
+                logs = []
+            logs.append({"at": now, "message": str(message)})
+            logs = logs[-500:]
+            assignments = [
+                "logs_json = ?",
+                "heartbeat_at = ?",
+            ]
+            payload: list[Any] = [json.dumps(logs), now]
+            if stage is not None:
+                assignments.append("stage = ?")
+                payload.append(str(stage).strip().lower())
+            if progress is not None:
+                assignments.append("progress = ?")
+                payload.append(self._clamp_progress(progress))
+            payload.extend(where_params)
+            conn.execute(
+                f"""
+                UPDATE jobs
+                SET {", ".join(assignments)}
+                WHERE {where_clause}
+                """,
+                tuple(payload),
+            )
+            conn.commit()
+
+    def is_job_cancel_requested(self, job_id: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT cancel_requested FROM jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()
+        if row is None:
+            return False
+        return bool(int(row["cancel_requested"]))
+
+    def request_job_cancel(
+        self,
+        job_id: int,
+        *,
+        workspace_id: int | None = None,
+    ) -> dict[str, Any] | None:
+        now = _utc_now_iso()
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if workspace_id is None:
+                row = conn.execute(
+                    "SELECT id, status FROM jobs WHERE id = ?",
+                    (job_id,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT id, status FROM jobs WHERE id = ? AND workspace_id = ?",
+                    (job_id, workspace_id),
+                ).fetchone()
+            if row is None:
+                conn.commit()
+                return None
+            status = str(row["status"]).strip().lower()
+            if status == "queued":
+                if workspace_id is None:
+                    conn.execute(
+                        """
+                        UPDATE jobs
+                        SET
+                            status = 'canceled',
+                            stage = 'canceled',
+                            cancel_requested = 1,
+                            error_message = 'Canceled by user.',
+                            finished_at = ?,
+                            heartbeat_at = ?
+                        WHERE id = ?
+                        """,
+                        (now, now, job_id),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE jobs
+                        SET
+                            status = 'canceled',
+                            stage = 'canceled',
+                            cancel_requested = 1,
+                            error_message = 'Canceled by user.',
+                            finished_at = ?,
+                            heartbeat_at = ?
+                        WHERE id = ? AND workspace_id = ?
+                        """,
+                        (now, now, job_id, workspace_id),
+                    )
+                conn.commit()
+                return {"status": "canceled", "immediate": True}
+            if status == "running":
+                if workspace_id is None:
+                    conn.execute(
+                        """
+                        UPDATE jobs
+                        SET
+                            cancel_requested = 1,
+                            stage = 'cancel_requested',
+                            heartbeat_at = ?
+                        WHERE id = ?
+                        """,
+                        (now, job_id),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE jobs
+                        SET
+                            cancel_requested = 1,
+                            stage = 'cancel_requested',
+                            heartbeat_at = ?
+                        WHERE id = ? AND workspace_id = ?
+                        """,
+                        (now, job_id, workspace_id),
+                    )
+                conn.commit()
+                return {"status": "running", "immediate": False}
+            conn.commit()
+            return {"status": status, "immediate": False}
+
+    def mark_job_completed(
+        self,
+        job_id: int,
+        *,
+        result_ref_type: str | None = None,
+        result_ref_id: int | None = None,
+        stage: str = "completed",
+    ) -> None:
+        self.update_job(
+            job_id,
+            status="completed",
+            stage=stage,
+            progress=1.0,
+            error_message=None,
+            cancel_requested=False,
+            result_ref_type=result_ref_type,
+            result_ref_id=result_ref_id,
+            finished=True,
+            heartbeat=True,
+        )
+
+    def mark_job_failed(self, job_id: int, *, error_message: str) -> None:
+        self.update_job(
+            job_id,
+            status="failed",
+            stage="failed",
+            error_message=error_message,
+            finished=True,
+            heartbeat=True,
+        )
+
+    def mark_job_canceled(self, job_id: int, *, error_message: str = "Canceled by user.") -> None:
+        self.update_job(
+            job_id,
+            status="canceled",
+            stage="canceled",
+            error_message=error_message,
+            cancel_requested=True,
+            finished=True,
+            heartbeat=True,
+        )
+
+    def reorder_workspace_queued_jobs(
+        self,
+        workspace_id: int,
+        ordered_job_ids: list[int],
+    ) -> bool:
+        desired_ids = [int(item) for item in ordered_job_ids]
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            global_rows = conn.execute(
+                """
+                SELECT id, workspace_id
+                FROM jobs
+                WHERE status = 'queued'
+                ORDER BY
+                    CASE
+                        WHEN job_type IN ('training', 'analysis') THEN 0
+                        WHEN job_type = 'slic_warmup' THEN 1
+                        ELSE 2
+                    END ASC,
+                    priority ASC,
+                    created_at ASC,
+                    id ASC
+                """
+            ).fetchall()
+            if not global_rows:
+                conn.commit()
+                return False
+            global_ids = [int(row["id"]) for row in global_rows]
+            workspace_queued_ids = [
+                int(row["id"])
+                for row in global_rows
+                if int(row["workspace_id"]) == int(workspace_id)
+            ]
+            if len(workspace_queued_ids) <= 1:
+                conn.commit()
+                return False
+            ordered_filtered = [job_id for job_id in desired_ids if job_id in workspace_queued_ids]
+            for job_id in workspace_queued_ids:
+                if job_id not in ordered_filtered:
+                    ordered_filtered.append(job_id)
+            if ordered_filtered == workspace_queued_ids:
+                conn.commit()
+                return False
+            original_positions = [global_ids.index(job_id) for job_id in workspace_queued_ids]
+            insert_at = min(original_positions) if original_positions else len(global_ids)
+            remainder = [job_id for job_id in global_ids if job_id not in workspace_queued_ids]
+            reordered_global = remainder[:insert_at] + ordered_filtered + remainder[insert_at:]
+            for index, job_id in enumerate(reordered_global, start=1):
+                conn.execute(
+                    "UPDATE jobs SET priority = ? WHERE id = ?",
+                    (index * 10, job_id),
+                )
+            conn.commit()
+            return True
 
     def create_labeler_project(
         self,

@@ -49,11 +49,57 @@
   var visiblePill = doc.getElementById("analysis-visible-pill");
   var emptyState = doc.getElementById("analysis-filter-empty");
   var sortHeaders = asArray(table.querySelectorAll("th[data-sort-key]"));
+  var jobsPollUrl = String(table.getAttribute("data-jobs-poll-url") || "");
+  var knownJobStatuses = {};
+  var hasJobPollInitialized = false;
 
   var sortState = {
     key: String(table.getAttribute("data-default-sort-key") || "created"),
     direction: String(table.getAttribute("data-default-sort-direction") || "desc")
   };
+
+  function statusClass(statusText) {
+    var key = lower(statusText);
+    if (key === "completed" || key === "trained" || key === "success") {
+      return "is-good";
+    }
+    if (key === "queued" || key === "running" || key === "training" || key === "cancel_requested") {
+      return "is-progress";
+    }
+    if (key === "failed" || key === "error" || key === "canceled") {
+      return "is-bad";
+    }
+    return "is-neutral";
+  }
+
+  function showToast(message, category) {
+    var wrap = doc.querySelector(".wrap");
+    if (!wrap) {
+      return;
+    }
+    var el = doc.createElement("div");
+    el.className = "flash " + (category || "success");
+    el.setAttribute("data-flash", "");
+    el.setAttribute("data-duration", "4200");
+    el.textContent = String(message || "");
+    wrap.insertBefore(el, wrap.firstChild);
+    window.setTimeout(function () {
+      el.classList.add("hide");
+      window.setTimeout(function () {
+        if (el.parentNode) {
+          el.parentNode.removeChild(el);
+        }
+      }, 420);
+    }, 4200);
+  }
+
+  function stageLabel(stageText) {
+    var text = String(stageText || "").trim();
+    if (!text) {
+      return "";
+    }
+    return text.replace(/_/g, " ");
+  }
 
   function updateHeaderSortState(key, direction) {
     sortHeaders.forEach(function (header) {
@@ -110,6 +156,14 @@
   function populateFilters() {
     var statuses = {};
     var models = {};
+    var currentStatus = statusFilter ? String(statusFilter.value || "") : "";
+    var currentModel = modelFilter ? String(modelFilter.value || "") : "";
+    if (statusFilter) {
+      statusFilter.innerHTML = '<option value="">All statuses</option>';
+    }
+    if (modelFilter) {
+      modelFilter.innerHTML = '<option value="">All models</option>';
+    }
     rows.forEach(function (row) {
       var statusKey = lower(row.getAttribute("data-status"));
       var statusLabel = String(row.getAttribute("data-status-label") || statusKey);
@@ -138,6 +192,12 @@
         option.textContent = models[modelKey];
         modelFilter.appendChild(option);
       });
+    }
+    if (statusFilter && currentStatus) {
+      statusFilter.value = currentStatus;
+    }
+    if (modelFilter && currentModel) {
+      modelFilter.value = currentModel;
     }
   }
 
@@ -177,6 +237,88 @@
     });
 
     updateVisibleCount();
+  }
+
+  function updateRowStatusFromJob(job) {
+    if (String(job.entity_type || "").toLowerCase() !== "analysis_run") {
+      return;
+    }
+    var runId = Number(job.entity_id);
+    if (!Number.isInteger(runId) || runId <= 0) {
+      return;
+    }
+    var row = table.querySelector('tr.analysis-run-row[data-run-id="' + String(runId) + '"]');
+    if (!row) {
+      return;
+    }
+    var statusKey = lower(job.status);
+    var statusLabel = String(job.status || "");
+    var stage = stageLabel(job.stage);
+    if ((statusKey === "queued" || statusKey === "running") && stage && stage !== statusKey) {
+      statusLabel = String(job.status || "") + " (" + stage + ")";
+    }
+    row.setAttribute("data-status", statusKey);
+    row.setAttribute("data-status-label", statusLabel);
+    var statusPill = row.querySelector(".status-pill");
+    if (statusPill) {
+      statusPill.classList.remove("is-good", "is-progress", "is-bad", "is-neutral");
+      statusPill.classList.add(statusClass(statusKey));
+      statusPill.textContent = statusLabel;
+    }
+  }
+
+  function pollAnalysisJobs() {
+    if (!jobsPollUrl) {
+      return;
+    }
+    var url = jobsPollUrl + (jobsPollUrl.indexOf("?") >= 0 ? "&" : "?") + "limit=120";
+    fetch(url, {
+      headers: {
+        "X-Requested-With": "XMLHttpRequest"
+      }
+    })
+      .then(function (response) {
+        if (!response.ok) {
+          throw new Error("poll failed");
+        }
+        return response.json();
+      })
+      .then(function (payload) {
+        var jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
+        var nextKnown = {};
+        jobs.forEach(function (job) {
+          var jobId = Number(job.id);
+          if (!Number.isInteger(jobId) || jobId <= 0) {
+            return;
+          }
+          var nextStatus = lower(job.status);
+          nextKnown[jobId] = nextStatus;
+          updateRowStatusFromJob(job);
+          if (!hasJobPollInitialized) {
+            return;
+          }
+          var previous = lower(knownJobStatuses[jobId] || "");
+          if (!previous || previous === nextStatus) {
+            return;
+          }
+          if (nextStatus === "running") {
+            showToast("Analysis job #" + String(jobId) + " started.", "success");
+          } else if (nextStatus === "completed") {
+            showToast("Analysis job #" + String(jobId) + " completed.", "success");
+          } else if (nextStatus === "failed") {
+            showToast("Analysis job #" + String(jobId) + " failed.", "error");
+          } else if (nextStatus === "canceled") {
+            showToast("Analysis job #" + String(jobId) + " canceled.", "warning");
+          }
+        });
+        knownJobStatuses = nextKnown;
+        hasJobPollInitialized = true;
+        populateFilters();
+        applyFilters();
+      })
+      .catch(function () {
+        // Ignore transient polling failures.
+      });
   }
 
   sortHeaders.forEach(function (header) {
@@ -264,4 +406,11 @@
   populateFilters();
   sortRows(sortState.key, sortState.direction);
   applyFilters();
+  pollAnalysisJobs();
+  window.setInterval(function () {
+    if (doc.hidden) {
+      return;
+    }
+    pollAnalysisJobs();
+  }, 10000);
 })();

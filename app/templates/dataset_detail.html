@@ -189,8 +189,32 @@
         {% else %}
           <button type="button" class="table-action-btn secondary" disabled>Label next unlabeled</button>
         {% endif %}
+        <form
+          method="post"
+          action="{{ url_for('main.queue_dataset_slic_warmup', workspace_id=workspace.id, dataset_id=dataset_project.id) }}"
+          class="action-inline-form"
+        >
+          <button
+            type="submit"
+            class="table-action-btn secondary"
+            {% if not draft_image_rows or active_slic_warmup_job %}disabled{% endif %}
+          >
+            {% if active_slic_warmup_job %}
+              SLIC warmup queued
+            {% else %}
+              Queue SLIC warmup
+            {% endif %}
+          </button>
+        </form>
+        <a class="table-action-btn secondary" href="{{ url_for('main.workspace_jobs', workspace_id=workspace.id) }}">Open Jobs</a>
       </div>
     </div>
+    {% if active_slic_warmup_job %}
+      <p class="muted">
+        SLIC warmup job #{{ active_slic_warmup_job.id }} is {{ active_slic_warmup_job.status }}.
+        <a href="{{ url_for('main.workspace_jobs', workspace_id=workspace.id) }}">View job queue</a>.
+      </p>
+    {% endif %}
 
     {% if draft_image_rows %}
       <div class="datasets-toolbar">

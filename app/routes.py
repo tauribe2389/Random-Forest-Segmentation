@@ -17,6 +17,7 @@ from flask import (
     abort,
     current_app,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -35,7 +36,11 @@ from .services.coco import (
     load_coco,
     parse_categories,
 )
-from .services.inference import run_analysis
+from .services.job_queue import (
+    build_analysis_dedupe_key,
+    build_slic_warmup_dedupe_key,
+    build_training_dedupe_key,
+)
 from .services.labeling.class_schema import class_entries as schema_class_entries
 from .services.labeling.class_schema import class_names as schema_class_names
 from .services.labeling.class_schema import normalize_class_schema, parse_class_names
@@ -55,7 +60,6 @@ from .services.postprocess.bootstrap_masks import (
 )
 from .services.schemas import DatasetSpec, FeatureConfig, TrainConfig
 from .services.storage import Storage
-from .services.training import train_model
 
 bp = Blueprint("main", __name__)
 
@@ -66,6 +70,10 @@ def _storage() -> Storage:
 
 def _base_dir() -> Path:
     return Path(current_app.config["BASE_DIR"]).resolve()
+
+
+def _utc_now_iso() -> str:
+    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 
 def _to_relative_under_base(path_value: str) -> str | None:
@@ -376,6 +384,63 @@ def _coerce_nonnegative_float(value: Any) -> float:
     if numeric < 0:
         return 0.0
     return numeric
+
+
+def _job_is_terminal(status_value: Any) -> bool:
+    return str(status_value or "").strip().lower() in {"completed", "failed", "canceled"}
+
+
+def _job_last_log(job: dict[str, Any]) -> str:
+    logs = job.get("logs_json")
+    if not isinstance(logs, list) or not logs:
+        return ""
+    last_entry = logs[-1]
+    if isinstance(last_entry, dict):
+        return str(last_entry.get("message", "")).strip()
+    return str(last_entry).strip()
+
+
+def _job_progress_percent(job: dict[str, Any]) -> float:
+    try:
+        numeric = float(job.get("progress", 0.0))
+    except (TypeError, ValueError):
+        numeric = 0.0
+    if numeric < 0:
+        numeric = 0.0
+    if numeric > 1:
+        numeric = 1.0
+    return round(numeric * 100.0, 2)
+
+
+def _serialize_job(job: dict[str, Any], *, queue_positions: dict[int, int] | None = None) -> dict[str, Any]:
+    job_id = int(job["id"])
+    queue_position = queue_positions.get(job_id) if isinstance(queue_positions, dict) else None
+    payload = {
+        "id": job_id,
+        "workspace_id": int(job.get("workspace_id", 0) or 0),
+        "job_type": str(job.get("job_type", "")),
+        "status": str(job.get("status", "")),
+        "stage": str(job.get("stage", "")),
+        "progress": float(job.get("progress", 0.0) or 0.0),
+        "progress_percent": _job_progress_percent(job),
+        "created_at": str(job.get("created_at", "")),
+        "started_at": str(job.get("started_at", "")),
+        "finished_at": str(job.get("finished_at", "")),
+        "heartbeat_at": str(job.get("heartbeat_at", "")),
+        "worker_id": str(job.get("worker_id", "")),
+        "error_message": str(job.get("error_message", "") or ""),
+        "entity_type": str(job.get("entity_type", "") or ""),
+        "entity_id": int(job.get("entity_id", 0) or 0),
+        "result_ref_type": str(job.get("result_ref_type", "") or ""),
+        "result_ref_id": int(job.get("result_ref_id", 0) or 0),
+        "cancel_requested": bool(job.get("cancel_requested")),
+        "priority": int(job.get("priority", 0) or 0),
+        "rerun_of_job_id": int(job.get("rerun_of_job_id", 0) or 0),
+        "last_log": _job_last_log(job),
+    }
+    if queue_position is not None:
+        payload["queue_position"] = int(queue_position)
+    return payload
 
 
 def _extract_confusion_matrix(metrics: dict[str, Any], class_order: list[str]) -> dict[str, Any] | None:
@@ -1338,6 +1403,11 @@ def workspace_dataset_detail(workspace_id: int, dataset_id: int) -> str:
         "registration_count": len(registration_history),
         "has_masks": bool(masked_stems),
     }
+    active_slic_warmup_job = storage.find_active_job_by_dedupe(
+        dedupe_key=build_slic_warmup_dedupe_key(workspace_id=workspace_id, dataset_id=dataset_id),
+        workspace_id=workspace_id,
+        job_type="slic_warmup",
+    )
     class_rows = [
         {
             "order": idx + 1,
@@ -1369,6 +1439,61 @@ def workspace_dataset_detail(workspace_id: int, dataset_id: int) -> str:
         start_label_url=start_label_url,
         label_next_unlabeled_url=label_next_unlabeled_url,
         next_unlabeled_image_name=next_unlabeled_image_name,
+        active_slic_warmup_job=active_slic_warmup_job,
+    )
+
+
+@bp.route("/workspace/<int:workspace_id>/datasets/<int:dataset_id>/slic-warmup", methods=["POST"])
+def queue_dataset_slic_warmup(workspace_id: int, dataset_id: int) -> str:
+    _workspace_by_id_or_404(workspace_id)
+    storage = _storage()
+    dataset_project = storage.get_workspace_dataset(workspace_id, dataset_id)
+    if dataset_project is None:
+        abort(404, description=f"Dataset project id={dataset_id} not found in workspace.")
+
+    images_dir = Path(str(dataset_project.get("images_dir", ""))).resolve()
+    image_count = len(list_images(images_dir)) if images_dir.exists() and images_dir.is_dir() else 0
+    if image_count <= 0:
+        flash("This draft has no images to warm up.", "warning")
+        return redirect(
+            url_for("main.workspace_dataset_detail", workspace_id=workspace_id, dataset_id=dataset_id)
+            + "#draft-images-section"
+        )
+
+    dedupe_key = build_slic_warmup_dedupe_key(workspace_id=workspace_id, dataset_id=dataset_id)
+    existing = storage.find_active_job_by_dedupe(
+        dedupe_key=dedupe_key,
+        workspace_id=workspace_id,
+        job_type="slic_warmup",
+    )
+    if existing is not None:
+        existing_id = int(existing["id"])
+        existing_status = str(existing.get("status", "")).strip().lower() or "active"
+        flash(f"SLIC warmup job #{existing_id} is already {existing_status}.", "warning")
+        return redirect(
+            url_for("main.workspace_dataset_detail", workspace_id=workspace_id, dataset_id=dataset_id)
+            + "#draft-images-section"
+        )
+
+    payload = {
+        "workspace_id": workspace_id,
+        "dataset_id": dataset_id,
+    }
+    job_id, created = storage.enqueue_job(
+        workspace_id=workspace_id,
+        job_type="slic_warmup",
+        payload=payload,
+        dedupe_key=dedupe_key,
+        entity_type="dataset",
+        entity_id=dataset_id,
+    )
+    if created:
+        flash(f"Queued SLIC warmup job #{job_id} for {image_count} image(s).", "success")
+    else:
+        flash(f"SLIC warmup job #{job_id} is already queued or running.", "warning")
+    return redirect(
+        url_for("main.workspace_dataset_detail", workspace_id=workspace_id, dataset_id=dataset_id)
+        + "#draft-images-section"
     )
 
 
@@ -2004,66 +2129,88 @@ def train_new_model(workspace_id: int | None = None) -> str:
         flash("Selected dataset does not exist in this workspace.", "error")
         return redirect(url_for("main.workspace_models", workspace_id=workspace_id))
 
-    logs: list[str] = []
-
-    def log(message: str) -> None:
-        logs.append(message)
-
     try:
         feature_config = FeatureConfig.from_form(request.form)
         train_config = TrainConfig.from_form(
             request.form,
             default_seed=int(current_app.config["RANDOM_SEED"]),
         )
-        result = train_model(
-            model_name=model_name,
-            dataset=dataset,
-            feature_config=feature_config,
-            train_config=train_config,
-            models_dir=Path(current_app.config["MODELS_DIR"]),
-            code_version=str(current_app.config["CODE_VERSION"]),
-            log_fn=log,
+    except Exception as exc:
+        flash(f"Invalid training configuration: {exc}", "error")
+        return redirect(url_for("main.workspace_models", workspace_id=workspace_id))
+
+    feature_payload = feature_config.to_dict()
+    train_payload = train_config.to_dict()
+    dedupe_key = build_training_dedupe_key(
+        workspace_id=workspace_id,
+        model_name=model_name,
+        dataset_id=dataset_id,
+        feature_config=feature_payload,
+        train_config=train_payload,
+    )
+    existing_job = storage.find_active_job_by_dedupe(
+        dedupe_key=dedupe_key,
+        workspace_id=workspace_id,
+        job_type="training",
+    )
+    if existing_job is not None:
+        existing_id = int(existing_job["id"])
+        existing_status = str(existing_job.get("status", "queued"))
+        flash(
+            f"Training job #{existing_id} is already {existing_status} for this configuration.",
+            "warning",
         )
-        model_id = storage.create_model(
-            name=model_name,
-            dataset_id=dataset_id,
-            classes=result.classes,
-            feature_config=result.feature_config,
-            hyperparams=result.hyperparams,
-            metrics=result.metrics,
-            artifact_dir=result.artifact_dir,
-            model_path=result.model_path,
-            metadata_path=result.metadata_path,
-            status="trained",
-            error_message=None,
+        return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+
+    hyperparams_payload = {
+        "n_estimators": int(train_config.n_estimators),
+        "max_depth": train_config.max_depth,
+        "min_samples_split": int(train_config.min_samples_split),
+        "min_samples_leaf": int(train_config.min_samples_leaf),
+        "class_weight": str(train_config.class_weight),
+    }
+    model_id = storage.create_model(
+        name=model_name,
+        dataset_id=dataset_id,
+        classes=[],
+        feature_config=feature_payload,
+        hyperparams=hyperparams_payload,
+        metrics={},
+        artifact_dir="",
+        model_path="",
+        metadata_path="",
+        status="queued",
+        error_message=None,
+        workspace_id=workspace_id,
+    )
+    payload = {
+        "workspace_id": workspace_id,
+        "model_id": model_id,
+        "model_name": model_name,
+        "dataset_id": dataset_id,
+        "feature_config": feature_payload,
+        "train_config": train_payload,
+    }
+    job_id, created = storage.enqueue_job(
+        workspace_id=workspace_id,
+        job_type="training",
+        payload=payload,
+        dedupe_key=dedupe_key,
+        entity_type="model",
+        entity_id=model_id,
+        rerun_of_job_id=None,
+    )
+    if not created:
+        storage.update_model(
+            model_id,
+            status="canceled",
+            error_message="Duplicate training request suppressed.",
             workspace_id=workspace_id,
         )
-    except Exception as exc:
-        logs.append(f"Training failed: {exc}")
-        flash(f"Training failed: {exc}", "error")
-        return render_template(
-            "train_status.html",
-            workspace=workspace,
-            success=False,
-            model_id=None,
-            logs=logs,
-            warnings=[],
-            error=str(exc),
-        ), 500
-
-    if result.warnings:
-        flash(f"Training completed with {len(result.warnings)} warning(s).", "warning")
+        flash(f"Training job #{job_id} is already queued or running.", "warning")
     else:
-        flash("Training completed successfully.", "success")
-    return render_template(
-        "train_status.html",
-        workspace=workspace,
-        success=True,
-        model_id=model_id,
-        logs=logs,
-        warnings=result.warnings,
-        error=None,
-    )
+        flash(f"Training job queued as #{job_id}.", "success")
+    return redirect(url_for("main.workspace_models", workspace_id=workspace_id))
 
 
 @bp.route("/workspace/<int:workspace_id>/models/<int:model_id>", methods=["GET"])
@@ -2479,76 +2626,61 @@ def new_analysis(workspace_id: int | None = None) -> str:
         )
         return _render_analysis_form(400)
 
+    dedupe_key = build_analysis_dedupe_key(
+        workspace_id=workspace_id,
+        model_id=model_id,
+        input_images=input_images,
+        postprocess_config=postprocess_config,
+    )
+    existing_job = storage.find_active_job_by_dedupe(
+        dedupe_key=dedupe_key,
+        workspace_id=workspace_id,
+        job_type="analysis",
+    )
+    if existing_job is not None:
+        existing_id = int(existing_job["id"])
+        existing_status = str(existing_job.get("status", "queued"))
+        flash(
+            f"Analysis job #{existing_id} is already {existing_status} for this selection.",
+            "warning",
+        )
+        return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+
     run_id = storage.create_analysis_run(
         model_id=model_id,
         input_images=input_images,
         workspace_id=workspace_id,
         postprocess_enabled=bool(postprocess_config.get("enabled")),
         postprocess_config=postprocess_config,
+        status="queued",
     )
-    logs: list[str] = []
-
-    def log(message: str) -> None:
-        logs.append(message)
-
-    try:
-        result = run_analysis(
-            run_id=run_id,
-            model_record=model,
-            image_paths=input_images,
-            runs_dir=Path(current_app.config["RUNS_DIR"]),
-            base_dir=_base_dir(),
-            random_seed=int(current_app.config["RANDOM_SEED"]),
-            log_fn=log,
-            postprocess_config=postprocess_config,
-        )
-        for item in result.items:
-            storage.add_analysis_item(
-                run_id=run_id,
-                input_image=item.input_image,
-                mask_path=item.mask_path,
-                overlay_path=item.overlay_path,
-                summary=item.summary,
-                raw_mask_path=item.raw_mask_path,
-                conf_path=item.conf_path,
-                raw_overlay_path=item.raw_overlay_path,
-                refined_mask_path=item.refined_mask_path,
-                refined_overlay_path=item.refined_overlay_path,
-                flip_stats=item.flip_stats,
-                area_raw=item.area_raw,
-                area_refined=item.area_refined,
-                area_delta=item.area_delta,
-                postprocess_applied=item.postprocess_applied,
-            )
-        storage.update_analysis_run(
+    payload = {
+        "workspace_id": workspace_id,
+        "run_id": run_id,
+        "model_id": model_id,
+        "input_images": input_images,
+        "postprocess_config": postprocess_config,
+    }
+    job_id, created = storage.enqueue_job(
+        workspace_id=workspace_id,
+        job_type="analysis",
+        payload=payload,
+        dedupe_key=dedupe_key,
+        entity_type="analysis_run",
+        entity_id=run_id,
+        rerun_of_job_id=None,
+    )
+    if not created:
+        storage.update_analysis_run_state(
             run_id,
-            output_dir=result.output_dir,
-            summary=result.summary,
-            status="completed",
-            error_message=None,
-            postprocess_enabled=result.postprocess_enabled,
-            postprocess_config=result.postprocess_config,
-            flip_stats=result.flip_stats,
-            area_raw=result.area_raw,
-            area_refined=result.area_refined,
-            area_delta=result.area_delta,
+            status="canceled",
+            error_message="Duplicate analysis request suppressed.",
+            workspace_id=workspace_id,
         )
-    except Exception as exc:
-        storage.update_analysis_run(
-            run_id,
-            output_dir="",
-            summary={"logs": logs},
-            status="failed",
-            error_message=str(exc),
-        )
-        flash(f"Analysis failed: {exc}", "error")
-        return redirect(url_for("main.new_analysis", workspace_id=workspace_id, model_id=model_id))
-
-    if result.warnings:
-        flash(f"Analysis completed with {len(result.warnings)} warning(s).", "warning")
+        flash(f"Analysis job #{job_id} is already queued or running.", "warning")
     else:
-        flash("Analysis completed successfully.", "success")
-    return redirect(url_for("main.analysis_details", workspace_id=workspace_id, run_id=run_id))
+        flash(f"Analysis job queued as #{job_id}.", "success")
+    return redirect(url_for("main.workspace_analysis", workspace_id=workspace_id))
 
 
 @bp.route("/workspace/<int:workspace_id>/analysis/<int:run_id>", methods=["GET"])
@@ -3026,6 +3158,418 @@ def promote_analysis_run(workspace_id: int, run_id: int) -> str:
             dataset_id=dataset_project_id,
         )
     )
+
+
+def _job_status_class(status_value: str) -> str:
+    status_key = str(status_value or "").strip().lower()
+    if status_key in {"completed", "trained", "success"}:
+        return "is-good"
+    if status_key in {"queued", "running", "training", "cancel_requested"}:
+        return "is-progress"
+    if status_key in {"failed", "error", "canceled"}:
+        return "is-bad"
+    return "is-neutral"
+
+
+def _job_type_label(job_type_value: Any) -> str:
+    job_type = str(job_type_value or "").strip().lower()
+    if job_type == "training":
+        return "Training"
+    if job_type == "analysis":
+        return "Analysis"
+    if job_type == "slic_warmup":
+        return "SLIC Warmup"
+    if not job_type:
+        return "-"
+    return job_type.replace("_", " ").title()
+
+
+def _job_target_details(
+    storage: Storage,
+    *,
+    workspace_id: int,
+    job: dict[str, Any],
+) -> tuple[str, str | None]:
+    entity_type = str(job.get("entity_type", "")).strip().lower()
+    entity_id_raw = job.get("entity_id")
+    try:
+        entity_id = int(entity_id_raw)
+    except (TypeError, ValueError):
+        entity_id = 0
+    if entity_type == "model" and entity_id > 0:
+        model = storage.get_model(entity_id, workspace_id=workspace_id)
+        if model is not None:
+            return (
+                str(model.get("name", f"Model #{entity_id}")),
+                url_for("main.model_details", workspace_id=workspace_id, model_id=entity_id),
+            )
+        return (f"Model #{entity_id}", None)
+    if entity_type == "analysis_run" and entity_id > 0:
+        run = storage.get_analysis_run(entity_id, workspace_id=workspace_id)
+        if run is None:
+            return (f"Run #{entity_id}", None)
+        model_name = str(run.get("model_name", "")).strip()
+        if model_name:
+            return (
+                f"Run #{entity_id} ({model_name})",
+                url_for("main.analysis_details", workspace_id=workspace_id, run_id=entity_id),
+            )
+        return (f"Run #{entity_id}", url_for("main.analysis_details", workspace_id=workspace_id, run_id=entity_id))
+    if entity_type == "dataset" and entity_id > 0:
+        dataset_project = storage.get_workspace_dataset(workspace_id, entity_id)
+        if dataset_project is None:
+            return (f"Dataset #{entity_id}", None)
+        dataset_name = str(dataset_project.get("name", "")).strip() or f"Dataset #{entity_id}"
+        return (
+            dataset_name,
+            url_for("main.workspace_dataset_detail", workspace_id=workspace_id, dataset_id=entity_id),
+        )
+    return ("-", None)
+
+
+def _apply_immediate_cancel_to_entity(
+    storage: Storage,
+    *,
+    workspace_id: int,
+    job: dict[str, Any],
+) -> None:
+    entity_type = str(job.get("entity_type", "")).strip().lower()
+    entity_id_raw = job.get("entity_id")
+    try:
+        entity_id = int(entity_id_raw)
+    except (TypeError, ValueError):
+        entity_id = 0
+    if entity_id <= 0:
+        return
+    if entity_type == "model":
+        storage.update_model(
+            entity_id,
+            status="canceled",
+            error_message="Canceled by user.",
+            workspace_id=workspace_id,
+        )
+    elif entity_type == "analysis_run":
+        storage.update_analysis_run_state(
+            entity_id,
+            status="canceled",
+            error_message="Canceled by user.",
+            workspace_id=workspace_id,
+        )
+
+
+@bp.route("/workspace/<int:workspace_id>/jobs", methods=["GET"])
+def workspace_jobs(workspace_id: int) -> str:
+    workspace = _workspace_by_id_or_404(workspace_id)
+    storage = _storage()
+    jobs = storage.list_jobs(workspace_id=workspace_id, limit=250)
+    queued_global = storage.list_queued_jobs(limit=1000)
+    queue_positions = {int(item["id"]): idx + 1 for idx, item in enumerate(queued_global)}
+
+    rows: list[dict[str, Any]] = []
+    for job in jobs:
+        row = _serialize_job(job, queue_positions=queue_positions)
+        status_key = str(row.get("status", "")).strip().lower()
+        job_type = str(row.get("job_type", "")).strip().lower()
+        target_label, target_url = _job_target_details(storage, workspace_id=workspace_id, job=job)
+        row["target_label"] = target_label
+        row["target_url"] = target_url
+        row["status_class"] = _job_status_class(status_key)
+        row["job_type_label"] = _job_type_label(job_type)
+        row["is_terminal"] = _job_is_terminal(status_key)
+        row["can_cancel"] = status_key in {"queued", "running"}
+        row["can_rerun"] = status_key in {"completed", "failed", "canceled"}
+        row["stage_label"] = str(row.get("stage", "")).replace("_", " ").strip().title() or "-"
+        rows.append(row)
+    queued_rows = [row for row in rows if str(row.get("status", "")).strip().lower() == "queued"]
+    non_queued_rows = [row for row in rows if str(row.get("status", "")).strip().lower() != "queued"]
+    queued_rows.sort(key=lambda item: int(item.get("queue_position", 999999)))
+    non_queued_rows.sort(key=lambda item: str(item.get("created_at", "")), reverse=True)
+    rows = queued_rows + non_queued_rows
+
+    return render_template(
+        "jobs_index.html",
+        workspace=workspace,
+        jobs=rows,
+        jobs_poll_url=url_for("main.workspace_jobs_poll", workspace_id=workspace_id),
+        jobs_reorder_url=url_for("main.workspace_jobs_reorder", workspace_id=workspace_id),
+    )
+
+
+@bp.route("/workspace/<int:workspace_id>/jobs/poll", methods=["GET"])
+def workspace_jobs_poll(workspace_id: int):
+    _workspace_by_id_or_404(workspace_id)
+    storage = _storage()
+    job_type = str(request.args.get("job_type", "")).strip().lower()
+    if job_type not in {"training", "analysis", "slic_warmup"}:
+        job_type = ""
+    limit = request.args.get("limit", type=int) or 120
+    limit = max(1, min(500, int(limit)))
+    jobs = storage.list_jobs(
+        workspace_id=workspace_id,
+        limit=limit,
+        job_type=job_type or None,
+    )
+    queued_global = storage.list_queued_jobs(limit=1000)
+    queue_positions = {int(item["id"]): idx + 1 for idx, item in enumerate(queued_global)}
+    serialized = [_serialize_job(item, queue_positions=queue_positions) for item in jobs]
+    return jsonify(
+        {
+            "generated_at": _utc_now_iso(),
+            "workspace_id": workspace_id,
+            "job_type": job_type or None,
+            "jobs": serialized,
+        }
+    )
+
+
+@bp.route("/workspace/<int:workspace_id>/jobs/<int:job_id>/cancel", methods=["POST"])
+def workspace_job_cancel(workspace_id: int, job_id: int) -> str:
+    _workspace_by_id_or_404(workspace_id)
+    storage = _storage()
+    job = storage.get_job(job_id, workspace_id=workspace_id)
+    if job is None:
+        abort(404, description=f"Job id={job_id} not found in workspace.")
+    status_key = str(job.get("status", "")).strip().lower()
+    if status_key in {"completed", "failed", "canceled"}:
+        response_payload = {
+            "ok": False,
+            "job_id": job_id,
+            "status": status_key,
+            "message": f"Job #{job_id} is already {status_key}.",
+        }
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify(response_payload), 409
+        flash(response_payload["message"], "warning")
+        return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+
+    result = storage.request_job_cancel(job_id, workspace_id=workspace_id)
+    if result is None:
+        abort(404, description=f"Job id={job_id} not found in workspace.")
+    immediate = bool(result.get("immediate"))
+    if immediate:
+        _apply_immediate_cancel_to_entity(storage, workspace_id=workspace_id, job=job)
+        message = f"Job #{job_id} canceled."
+    else:
+        message = f"Cancellation requested for running job #{job_id}."
+
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return jsonify(
+            {
+                "ok": True,
+                "job_id": job_id,
+                "status": str(result.get("status", "")),
+                "immediate": immediate,
+                "message": message,
+            }
+        )
+    flash(message, "success")
+    return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+
+
+@bp.route("/workspace/<int:workspace_id>/jobs/<int:job_id>/rerun", methods=["POST"])
+def workspace_job_rerun(workspace_id: int, job_id: int) -> str:
+    _workspace_by_id_or_404(workspace_id)
+    storage = _storage()
+    original_job = storage.get_job(job_id, workspace_id=workspace_id)
+    if original_job is None:
+        abort(404, description=f"Job id={job_id} not found in workspace.")
+    original_status = str(original_job.get("status", "")).strip().lower()
+    if original_status not in {"completed", "failed", "canceled"}:
+        flash(f"Only completed/failed/canceled jobs can be re-run. Job #{job_id} is {original_status}.", "warning")
+        return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+
+    payload = original_job.get("payload_json")
+    if not isinstance(payload, dict):
+        flash("Unable to re-run job: payload metadata is missing.", "error")
+        return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+
+    job_type = str(original_job.get("job_type", "")).strip().lower()
+    if job_type == "training":
+        model_name = str(payload.get("model_name", "")).strip() or f"rerun_model_{job_id}"
+        dataset_id = int(payload.get("dataset_id", 0) or 0)
+        feature_config = payload.get("feature_config")
+        train_config = payload.get("train_config")
+        if dataset_id <= 0 or not isinstance(feature_config, dict) or not isinstance(train_config, dict):
+            flash("Unable to re-run training job: payload is incomplete.", "error")
+            return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+        dataset = storage.get_dataset(dataset_id, workspace_id=workspace_id)
+        if dataset is None:
+            flash(f"Unable to re-run training job: dataset #{dataset_id} no longer exists.", "error")
+            return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+        dedupe_key = build_training_dedupe_key(
+            workspace_id=workspace_id,
+            model_name=model_name,
+            dataset_id=dataset_id,
+            feature_config=feature_config,
+            train_config=train_config,
+        )
+        existing = storage.find_active_job_by_dedupe(
+            dedupe_key=dedupe_key,
+            workspace_id=workspace_id,
+            job_type="training",
+        )
+        if existing is not None:
+            flash(
+                f"Training job #{int(existing['id'])} is already queued/running with this configuration.",
+                "warning",
+            )
+            return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+
+        train_cfg = TrainConfig.from_dict(train_config)
+        model_id = storage.create_model(
+            name=model_name,
+            dataset_id=dataset_id,
+            classes=[],
+            feature_config=feature_config,
+            hyperparams={
+                "n_estimators": int(train_cfg.n_estimators),
+                "max_depth": train_cfg.max_depth,
+                "min_samples_split": int(train_cfg.min_samples_split),
+                "min_samples_leaf": int(train_cfg.min_samples_leaf),
+                "class_weight": str(train_cfg.class_weight),
+            },
+            metrics={},
+            artifact_dir="",
+            model_path="",
+            metadata_path="",
+            status="queued",
+            error_message=None,
+            workspace_id=workspace_id,
+        )
+        new_payload = dict(payload)
+        new_payload["workspace_id"] = workspace_id
+        new_payload["model_id"] = model_id
+        new_job_id, _ = storage.enqueue_job(
+            workspace_id=workspace_id,
+            job_type="training",
+            payload=new_payload,
+            dedupe_key=dedupe_key,
+            entity_type="model",
+            entity_id=model_id,
+            rerun_of_job_id=job_id,
+        )
+        flash(f"Queued training re-run as job #{new_job_id}.", "success")
+        return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+
+    if job_type == "analysis":
+        model_id = int(payload.get("model_id", 0) or 0)
+        input_images = payload.get("input_images")
+        postprocess_config = payload.get("postprocess_config")
+        if model_id <= 0 or not isinstance(input_images, list):
+            flash("Unable to re-run analysis job: payload is incomplete.", "error")
+            return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+        model_record = storage.get_model(model_id, workspace_id=workspace_id)
+        if model_record is None:
+            flash(f"Unable to re-run analysis job: model #{model_id} no longer exists.", "error")
+            return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+        if not isinstance(postprocess_config, dict):
+            postprocess_config = {}
+        normalized_images = [str(item) for item in input_images if str(item).strip()]
+        if not normalized_images:
+            flash("Unable to re-run analysis job: no valid input images remain.", "error")
+            return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+        dedupe_key = build_analysis_dedupe_key(
+            workspace_id=workspace_id,
+            model_id=model_id,
+            input_images=normalized_images,
+            postprocess_config=postprocess_config,
+        )
+        existing = storage.find_active_job_by_dedupe(
+            dedupe_key=dedupe_key,
+            workspace_id=workspace_id,
+            job_type="analysis",
+        )
+        if existing is not None:
+            flash(
+                f"Analysis job #{int(existing['id'])} is already queued/running with this selection.",
+                "warning",
+            )
+            return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+        run_id = storage.create_analysis_run(
+            model_id=model_id,
+            input_images=normalized_images,
+            workspace_id=workspace_id,
+            postprocess_enabled=bool(postprocess_config.get("enabled")),
+            postprocess_config=postprocess_config,
+            status="queued",
+        )
+        new_payload = {
+            "workspace_id": workspace_id,
+            "run_id": run_id,
+            "model_id": model_id,
+            "input_images": normalized_images,
+            "postprocess_config": postprocess_config,
+        }
+        new_job_id, _ = storage.enqueue_job(
+            workspace_id=workspace_id,
+            job_type="analysis",
+            payload=new_payload,
+            dedupe_key=dedupe_key,
+            entity_type="analysis_run",
+            entity_id=run_id,
+            rerun_of_job_id=job_id,
+        )
+        flash(f"Queued analysis re-run as job #{new_job_id}.", "success")
+        return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+
+    if job_type == "slic_warmup":
+        dataset_id = int(payload.get("dataset_id", 0) or original_job.get("entity_id", 0) or 0)
+        if dataset_id <= 0:
+            flash("Unable to re-run SLIC warmup job: payload is incomplete.", "error")
+            return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+        dataset_project = storage.get_workspace_dataset(workspace_id, dataset_id)
+        if dataset_project is None:
+            flash(f"Unable to re-run SLIC warmup job: dataset #{dataset_id} no longer exists.", "error")
+            return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+        dedupe_key = build_slic_warmup_dedupe_key(workspace_id=workspace_id, dataset_id=dataset_id)
+        existing = storage.find_active_job_by_dedupe(
+            dedupe_key=dedupe_key,
+            workspace_id=workspace_id,
+            job_type="slic_warmup",
+        )
+        if existing is not None:
+            flash(
+                f"SLIC warmup job #{int(existing['id'])} is already queued/running for this dataset.",
+                "warning",
+            )
+            return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+        new_payload = {
+            "workspace_id": workspace_id,
+            "dataset_id": dataset_id,
+        }
+        new_job_id, _ = storage.enqueue_job(
+            workspace_id=workspace_id,
+            job_type="slic_warmup",
+            payload=new_payload,
+            dedupe_key=dedupe_key,
+            entity_type="dataset",
+            entity_id=dataset_id,
+            rerun_of_job_id=job_id,
+        )
+        flash(f"Queued SLIC warmup re-run as job #{new_job_id}.", "success")
+        return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+
+    flash(f"Unsupported job type for re-run: {job_type}", "error")
+    return redirect(url_for("main.workspace_jobs", workspace_id=workspace_id))
+
+
+@bp.route("/workspace/<int:workspace_id>/jobs/reorder", methods=["POST"])
+def workspace_jobs_reorder(workspace_id: int):
+    _workspace_by_id_or_404(workspace_id)
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "message": "Expected JSON payload."}), 400
+    ordered_ids_raw = payload.get("ordered_job_ids")
+    if not isinstance(ordered_ids_raw, list):
+        return jsonify({"ok": False, "message": "ordered_job_ids must be an array."}), 400
+    ordered_ids: list[int] = []
+    for item in ordered_ids_raw:
+        try:
+            ordered_ids.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    changed = _storage().reorder_workspace_queued_jobs(workspace_id, ordered_ids)
+    return jsonify({"ok": True, "changed": changed})
 
 
 @bp.route("/workspace/<int:workspace_id>/settings", methods=["GET", "POST"])

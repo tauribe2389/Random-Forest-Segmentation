@@ -44,7 +44,11 @@
 
   {% if models %}
     <div class="table-wrap">
-      <table id="models-table" class="models-table">
+      <table
+        id="models-table"
+        class="models-table"
+        data-jobs-poll-url="{{ url_for('main.workspace_jobs_poll', workspace_id=workspace.id, job_type='training') }}"
+      >
         <thead>
           <tr>
             <th class="select-col"><input type="checkbox" id="model-select-all" aria-label="Select all visible models"></th>
@@ -62,7 +66,7 @@
               {% set status_class = "is-good" %}
             {% elif status_key in ["running", "queued", "training"] %}
               {% set status_class = "is-progress" %}
-            {% elif status_key in ["failed", "error"] %}
+            {% elif status_key in ["failed", "error", "canceled"] %}
               {% set status_class = "is-bad" %}
             {% else %}
               {% set status_class = "is-neutral" %}
@@ -226,7 +230,7 @@
 
         <p class="models-form-error" id="train-form-error" hidden></p>
         <div class="form-actions models-form-actions">
-          <button type="submit" id="train-submit-btn">Train Model</button>
+          <button type="submit" id="train-submit-btn">Queue Training Job</button>
           <button type="button" class="secondary" id="train-reset-btn">Reset</button>
         </div>
       </form>

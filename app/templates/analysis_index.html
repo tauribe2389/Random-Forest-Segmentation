@@ -47,7 +47,13 @@
 
   {% if runs %}
     <div class="table-wrap">
-      <table id="analysis-runs-table" class="models-table datasets-table" data-default-sort-key="created" data-default-sort-direction="desc">
+      <table
+        id="analysis-runs-table"
+        class="models-table datasets-table"
+        data-default-sort-key="created"
+        data-default-sort-direction="desc"
+        data-jobs-poll-url="{{ url_for('main.workspace_jobs_poll', workspace_id=workspace.id, job_type='analysis') }}"
+      >
         <thead>
           <tr>
             <th class="is-sortable" data-sort-key="run_id">Run ID</th>
@@ -66,7 +72,7 @@
               {% set status_class = "is-good" %}
             {% elif status_key in ["running", "queued", "training"] %}
               {% set status_class = "is-progress" %}
-            {% elif status_key in ["failed", "error"] %}
+            {% elif status_key in ["failed", "error", "canceled"] %}
               {% set status_class = "is-bad" %}
             {% else %}
               {% set status_class = "is-neutral" %}

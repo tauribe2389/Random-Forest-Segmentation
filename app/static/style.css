@@ -4056,3 +4056,60 @@ body.modal-open {
     gap: 3px;
   }
 }
+
+#jobs-table tbody tr {
+  cursor: default;
+}
+
+#jobs-table .table-action-row form {
+  margin: 0;
+}
+
+.job-queue-col {
+  width: 74px;
+}
+
+.queue-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  border: 1px solid #bfd3ea;
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: #edf4fe;
+  color: #133f71;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.job-progress-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 100px;
+}
+
+.job-progress-wrap progress {
+  width: 72px;
+  height: 8px;
+}
+
+.job-last-log {
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#jobs-table tr.is-queue-row {
+  user-select: none;
+}
+
+#jobs-table tr.is-dragging td {
+  opacity: 0.45;
+}
+
+#jobs-table tr.is-drop-target td {
+  border-top: 2px solid #1f4f85;
+}

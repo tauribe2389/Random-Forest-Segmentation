@@ -7,6 +7,7 @@ from pathlib import Path
 
 from flask import Flask, request, session, url_for
 
+from .services.job_queue import JobQueueManager
 from .services.storage import Storage
 
 
@@ -81,18 +82,46 @@ def create_app() -> Flask:
         LABELER_SLIC_COMPACTNESS=float(os.getenv("SEG_APP_LABELER_SLIC_COMPACTNESS", "10")),
         LABELER_SLIC_SIGMA=float(os.getenv("SEG_APP_LABELER_SLIC_SIGMA", "1")),
         LABELER_MIN_COCO_AREA=int(os.getenv("SEG_APP_LABELER_MIN_COCO_AREA", "50")),
+        JOB_WORKER_COUNT=int(os.getenv("SEG_APP_JOB_WORKER_COUNT", "1")),
+        JOB_QUEUE_POLL_INTERVAL=float(os.getenv("SEG_APP_JOB_QUEUE_POLL_INTERVAL", "1.0")),
+        JOB_HEARTBEAT_INTERVAL=float(os.getenv("SEG_APP_JOB_HEARTBEAT_INTERVAL", "4.0")),
+        JOB_STALE_HEARTBEAT_SECONDS=int(os.getenv("SEG_APP_JOB_STALE_HEARTBEAT_SECONDS", "180")),
     )
 
     storage = Storage(db_path=db_path)
     storage.init_db()
     storage.migrate_labeler_class_schema_and_masks(fallback_names=labeler_categories)
     app.extensions["storage"] = storage
+    job_queue = JobQueueManager(
+        storage=storage,
+        db_path=db_path,
+        base_dir=base_dir,
+        models_dir=models_dir,
+        runs_dir=runs_dir,
+        code_version=str(app.config["CODE_VERSION"]),
+        random_seed=int(app.config["RANDOM_SEED"]),
+        worker_count=int(app.config["JOB_WORKER_COUNT"]),
+        poll_interval_seconds=float(app.config["JOB_QUEUE_POLL_INTERVAL"]),
+        heartbeat_interval_seconds=float(app.config["JOB_HEARTBEAT_INTERVAL"]),
+        stale_heartbeat_seconds=int(app.config["JOB_STALE_HEARTBEAT_SECONDS"]),
+    )
+    app.extensions["job_queue"] = job_queue
 
     from .labeler_routes import bp as labeler_bp
     from .routes import bp
 
     app.register_blueprint(bp)
     app.register_blueprint(labeler_bp)
+
+    @app.before_request
+    def _start_background_queue_once() -> None:
+        queue = app.extensions.get("job_queue")
+        if not isinstance(queue, JobQueueManager):
+            return
+        if app.extensions.get("_job_queue_started"):
+            return
+        queue.start()
+        app.extensions["_job_queue_started"] = True
 
     @app.context_processor
     def inject_workspace_navigation() -> dict[str, object]:
@@ -153,6 +182,11 @@ def create_app() -> Flask:
                     "url": url_for("main.workspace_analysis", workspace_id=workspace_id),
                 },
                 {
+                    "key": "jobs",
+                    "label": "Jobs",
+                    "url": url_for("main.workspace_jobs", workspace_id=workspace_id),
+                },
+                {
                     "key": "settings",
                     "label": "Settings",
                     "url": url_for("main.workspace_settings", workspace_id=workspace_id),
@@ -183,6 +217,14 @@ def create_app() -> Flask:
                 "main.promote_analysis_run",
             }:
                 active_section = "analysis"
+            elif endpoint in {
+                "main.workspace_jobs",
+                "main.workspace_jobs_poll",
+                "main.workspace_job_cancel",
+                "main.workspace_job_rerun",
+                "main.workspace_jobs_reorder",
+            }:
+                active_section = "jobs"
             elif endpoint in {"main.workspace_settings"}:
                 active_section = "settings"
 
@@ -387,6 +429,13 @@ def create_app() -> Flask:
                     {
                         "label": "Settings",
                         "url": url_for("main.workspace_settings", workspace_id=workspace_id),
+                    }
+                )
+            elif endpoint in {"main.workspace_jobs"}:
+                breadcrumbs.append(
+                    {
+                        "label": "Jobs",
+                        "url": url_for("main.workspace_jobs", workspace_id=workspace_id),
                     }
                 )
 
