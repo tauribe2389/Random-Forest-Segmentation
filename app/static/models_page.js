@@ -710,8 +710,12 @@
     var statusKey = lower(job.status);
     var label = String(job.status || "");
     var stage = stageLabel(job.stage);
+    var counterLabel = String(job.progress_counter_label || "").trim();
     if ((statusKey === "running" || statusKey === "queued") && stage && stage !== statusKey) {
       label = String(job.status || "") + " (" + stage + ")";
+    }
+    if ((statusKey === "running" || statusKey === "queued") && counterLabel) {
+      label += " [" + counterLabel + "]";
     }
     row.setAttribute("data-status", statusKey);
     row.setAttribute("data-status-label", label);

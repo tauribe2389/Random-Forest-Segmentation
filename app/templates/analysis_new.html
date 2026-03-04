@@ -77,6 +77,22 @@
             Selected: {{ selected_images|length }} image{% if selected_images|length != 1 %}s{% endif %}
           </p>
         </div>
+        <div class="analysis-image-pagination" id="analysis-image-pagination" hidden>
+          <div class="analysis-image-pagination-main">
+            <button type="button" class="secondary" id="analysis-page-prev" aria-label="Previous images page">Prev</button>
+            <span class="analysis-image-pagination-status" id="analysis-page-status">Page 1 of 1</span>
+            <button type="button" class="secondary" id="analysis-page-next" aria-label="Next images page">Next</button>
+          </div>
+          <label class="analysis-image-pagination-size">
+            Per page
+            <select id="analysis-page-size">
+              <option value="24">24</option>
+              <option value="48" selected>48</option>
+              <option value="72">72</option>
+              <option value="96">96</option>
+            </select>
+          </label>
+        </div>
 
         {% if workspace_images %}
           <div class="collection-thumb-grid analysis-image-grid" id="analysis-image-grid">
@@ -294,6 +310,11 @@
     var selectionBar = document.getElementById("analysis-selection-bar");
     var selectionBarCount = document.getElementById("analysis-selection-bar-count");
     var selectedListEl = document.getElementById("analysis-selected-list");
+    var paginationWrap = document.getElementById("analysis-image-pagination");
+    var pagePrevBtn = document.getElementById("analysis-page-prev");
+    var pageNextBtn = document.getElementById("analysis-page-next");
+    var pageStatusEl = document.getElementById("analysis-page-status");
+    var pageSizeSelect = document.getElementById("analysis-page-size");
     var summaryModelEl = document.getElementById("analysis-summary-model");
     var summaryCountEl = document.getElementById("analysis-summary-count");
     var summaryRefinementEl = document.getElementById("analysis-summary-refinement");
@@ -308,6 +329,18 @@
 
     var cards = Array.prototype.slice.call(document.querySelectorAll(".analysis-image-card"));
     var checkboxes = Array.prototype.slice.call(document.querySelectorAll("input[name='selected_images']"));
+    var paginationState = {
+      page: 1,
+      pageSize: 48,
+      filteredCount: cards.length
+    };
+
+    if (pageSizeSelect) {
+      var parsedInitialPageSize = Number(pageSizeSelect.value);
+      if (Number.isFinite(parsedInitialPageSize) && parsedInitialPageSize > 0) {
+        paginationState.pageSize = Math.floor(parsedInitialPageSize);
+      }
+    }
 
     function checkedBoxes() {
       return checkboxes.filter(function (item) {
@@ -416,17 +449,70 @@
       }
     }
 
-    function applyFilter() {
+    function filteredCards() {
       var query = searchInput ? searchInput.value.trim().toLowerCase() : "";
-      var visibleCount = 0;
-      cards.forEach(function (card) {
+      return cards.filter(function (card) {
         var filename = card.getAttribute("data-filename") || "";
-        var isVisible = filename.indexOf(query) >= 0;
-        card.hidden = !isVisible;
-        if (isVisible) {
-          visibleCount += 1;
-        }
+        return filename.indexOf(query) >= 0;
       });
+    }
+
+    function updatePaginationUi(filteredCount, pageCount, startIndex, endIndex) {
+      if (pageStatusEl) {
+        if (filteredCount <= 0) {
+          pageStatusEl.textContent = "No images";
+        } else {
+          pageStatusEl.textContent =
+            "Page " +
+            paginationState.page +
+            " of " +
+            pageCount +
+            " • Showing " +
+            startIndex +
+            "-" +
+            endIndex +
+            " of " +
+            filteredCount;
+        }
+      }
+      if (pagePrevBtn) {
+        pagePrevBtn.disabled = filteredCount <= 0 || paginationState.page <= 1;
+      }
+      if (pageNextBtn) {
+        pageNextBtn.disabled = filteredCount <= 0 || paginationState.page >= pageCount;
+      }
+      if (paginationWrap) {
+        paginationWrap.hidden = filteredCount <= 0 || filteredCount <= paginationState.pageSize;
+      }
+    }
+
+    function applyFilter() {
+      var filtered = filteredCards();
+      var filteredCount = filtered.length;
+      paginationState.filteredCount = filteredCount;
+      var pageCount = Math.max(1, Math.ceil(filteredCount / paginationState.pageSize));
+      if (paginationState.page > pageCount) {
+        paginationState.page = pageCount;
+      }
+      if (paginationState.page < 1) {
+        paginationState.page = 1;
+      }
+      var offsetStart = (paginationState.page - 1) * paginationState.pageSize;
+      var offsetEnd = offsetStart + paginationState.pageSize;
+
+      cards.forEach(function (card) {
+        card.hidden = true;
+      });
+      filtered.forEach(function (card, index) {
+        var visibleOnPage = index >= offsetStart && index < offsetEnd;
+        card.hidden = !visibleOnPage;
+      });
+
+      var visibleCount = Math.max(0, Math.min(filteredCount - offsetStart, paginationState.pageSize));
+      var startIndex = filteredCount > 0 ? offsetStart + 1 : 0;
+      var endIndex = filteredCount > 0 ? offsetStart + visibleCount : 0;
+      updatePaginationUi(filteredCount, pageCount, startIndex, endIndex);
+
       if (noVisibleEl) {
         noVisibleEl.hidden = visibleCount > 0;
       }
@@ -467,7 +553,36 @@
     });
 
     if (searchInput) {
-      searchInput.addEventListener("input", applyFilter);
+      searchInput.addEventListener("input", function () {
+        paginationState.page = 1;
+        applyFilter();
+      });
+    }
+
+    if (pagePrevBtn) {
+      pagePrevBtn.addEventListener("click", function () {
+        paginationState.page = Math.max(1, paginationState.page - 1);
+        applyFilter();
+      });
+    }
+
+    if (pageNextBtn) {
+      pageNextBtn.addEventListener("click", function () {
+        paginationState.page += 1;
+        applyFilter();
+      });
+    }
+
+    if (pageSizeSelect) {
+      pageSizeSelect.addEventListener("change", function () {
+        var parsed = Number(pageSizeSelect.value);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          return;
+        }
+        paginationState.pageSize = Math.floor(parsed);
+        paginationState.page = 1;
+        applyFilter();
+      });
     }
 
     if (selectVisibleBtn) {

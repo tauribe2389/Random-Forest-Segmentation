@@ -110,6 +110,7 @@
     if (progressWrap) {
       var progressEl = progressWrap.querySelector("progress");
       var percentEl = progressWrap.querySelector("span");
+      var counterEl = progressWrap.querySelector("[data-progress-counter]");
       var percentValue = Number(job.progress_percent);
       if (!Number.isFinite(percentValue)) {
         percentValue = 0;
@@ -119,6 +120,9 @@
       }
       if (percentEl) {
         percentEl.textContent = String(Math.round(percentValue)) + "%";
+      }
+      if (counterEl) {
+        counterEl.textContent = String(job.progress_counter_label || "");
       }
     }
 

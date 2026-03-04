@@ -136,6 +136,7 @@
           <thead>
             <tr>
               <th class="is-sortable" data-sort-key="name">Name</th>
+              <th class="is-sortable" data-sort-key="images">Images</th>
               <th class="is-sortable" data-sort-key="categories">Categories</th>
               <th class="is-sortable is-sorted-desc" data-sort-key="created">Created</th>
               <th class="is-sortable" data-sort-key="status">Status</th>
@@ -151,6 +152,7 @@
                 data-status="training-ready"
                 data-status-label="Training Ready"
                 data-search="{{ ((dataset.name or '') ~ ' registered training ready')|lower }}"
+                data-images="{{ dataset.image_count }}"
                 data-categories="{{ dataset.categories_json|length }}"
                 data-created="{{ dataset.created_at }}"
               >
@@ -163,6 +165,7 @@
                     {% endif %}
                   </div>
                 </td>
+                <td>{{ dataset.image_count }}</td>
                 <td>{{ dataset.categories_json|length }}</td>
                 <td><time datetime="{{ dataset.created_at }}" title="{{ dataset.created_at }}">{{ dataset.created_at|human_datetime }}</time></td>
                 <td><span class="status-pill is-good">Training Ready</span></td>

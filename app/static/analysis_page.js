@@ -254,8 +254,12 @@
     var statusKey = lower(job.status);
     var statusLabel = String(job.status || "");
     var stage = stageLabel(job.stage);
+    var counterLabel = String(job.progress_counter_label || "").trim();
     if ((statusKey === "queued" || statusKey === "running") && stage && stage !== statusKey) {
       statusLabel = String(job.status || "") + " (" + stage + ")";
+    }
+    if ((statusKey === "queued" || statusKey === "running") && counterLabel) {
+      statusLabel += " [" + counterLabel + "]";
     }
     row.setAttribute("data-status", statusKey);
     row.setAttribute("data-status-label", statusLabel);

@@ -11,7 +11,12 @@
     <p>No datasets are registered yet.</p>
     <p><a class="link-btn" href="{{ url_for('main.register_dataset', workspace_id=workspace.id) }}">Register Dataset</a></p>
   {% else %}
-    <form method="post" class="grid-form" id="augment-recipe-form">
+    <form
+      method="post"
+      class="grid-form"
+      id="augment-recipe-form"
+      data-source-images-url="{{ url_for('main.workspace_registered_dataset_images', workspace_id=workspace.id) }}"
+    >
       <label>
         Source Dataset
         <select name="source_dataset_id" required>
@@ -106,8 +111,73 @@
     const recipeJsonInput = document.getElementById("recipe-json");
     const formEl = document.getElementById("augment-recipe-form");
     const includeOriginalEl = formEl ? formEl.querySelector("input[name='include_original']") : null;
+    const sourceDatasetSelect = formEl ? formEl.querySelector("select[name='source_dataset_id']") : null;
+    const sourceImagesUrl = formEl ? String(formEl.getAttribute("data-source-images-url") || "") : "";
     if (!recipeListEl || !addStepBtn || !recipeJsonInput || !formEl || !includeOriginalEl) {
       return;
+    }
+    const sourceImageCache = {};
+
+    function normalizeImageList(values) {
+      if (!Array.isArray(values)) {
+        return [];
+      }
+      const seen = {};
+      const ordered = [];
+      values.forEach(function (item) {
+        const name = String(item || "").trim();
+        if (!name) {
+          return;
+        }
+        const key = name.toLowerCase();
+        if (seen[key]) {
+          return;
+        }
+        seen[key] = true;
+        ordered.push(name);
+      });
+      return ordered;
+    }
+
+    function selectedDatasetId() {
+      if (!sourceDatasetSelect) {
+        return 0;
+      }
+      const parsed = Number(sourceDatasetSelect.value);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return 0;
+      }
+      return Math.floor(parsed);
+    }
+
+    function loadSourceImages(datasetId) {
+      if (!datasetId || !sourceImagesUrl) {
+        return Promise.resolve([]);
+      }
+      if (Object.prototype.hasOwnProperty.call(sourceImageCache, datasetId)) {
+        return Promise.resolve(sourceImageCache[datasetId]);
+      }
+      const joiner = sourceImagesUrl.indexOf("?") >= 0 ? "&" : "?";
+      return fetch(sourceImagesUrl + joiner + "dataset_id=" + encodeURIComponent(String(datasetId)), {
+        headers: {
+          "X-Requested-With": "XMLHttpRequest"
+        }
+      })
+        .then(function (response) {
+          if (!response.ok) {
+            throw new Error("Unable to load source image list.");
+          }
+          return response.json();
+        })
+        .then(function (payload) {
+          const normalized = normalizeImageList(payload && payload.images);
+          sourceImageCache[datasetId] = normalized;
+          return normalized;
+        })
+        .catch(function () {
+          sourceImageCache[datasetId] = [];
+          return [];
+        });
     }
 
     function buildTransformSelect(selected) {
@@ -230,6 +300,36 @@
       }
     }
 
+    function parseSelectedImageText(rawText) {
+      return normalizeImageList(
+        String(rawText || "")
+          .replace(/,/g, "\n")
+          .split(/\r?\n/)
+      );
+    }
+
+    function buildSelectedTextFromSet(selectedSet, sourceImages) {
+      const sourceByLower = {};
+      const ordered = [];
+      (sourceImages || []).forEach(function (name) {
+        sourceByLower[String(name).toLowerCase()] = String(name);
+      });
+      (sourceImages || []).forEach(function (name) {
+        const key = String(name).toLowerCase();
+        if (!selectedSet.has(key)) {
+          return;
+        }
+        ordered.push(String(name));
+      });
+      selectedSet.forEach(function (key) {
+        if (Object.prototype.hasOwnProperty.call(sourceByLower, key)) {
+          return;
+        }
+        ordered.push(String(key));
+      });
+      return ordered.join("\n");
+    }
+
     function addStep(initialStep) {
       const step = initialStep || {};
       const stepEl = document.createElement("article");
@@ -332,18 +432,219 @@
       selectedWrap.className = "recipe-selected-wrap";
       selectedWrap.hidden = true;
       const selectedTitle = document.createElement("span");
-      selectedTitle.textContent = "Selected Images (one name per line)";
+      selectedTitle.textContent = "Selected Images";
       selectedWrap.appendChild(selectedTitle);
+
+      const pickerPanel = document.createElement("div");
+      pickerPanel.className = "recipe-image-picker";
+
+      const pickerToolbar = document.createElement("div");
+      pickerToolbar.className = "recipe-image-picker-toolbar";
+      const pickerSearchLabel = document.createElement("label");
+      pickerSearchLabel.className = "recipe-image-picker-search";
+      pickerSearchLabel.textContent = "Search source images";
+      const pickerSearchInput = document.createElement("input");
+      pickerSearchInput.type = "text";
+      pickerSearchInput.placeholder = "Filter by filename";
+      pickerSearchLabel.appendChild(pickerSearchInput);
+      pickerToolbar.appendChild(pickerSearchLabel);
+
+      const pickerActions = document.createElement("div");
+      pickerActions.className = "recipe-image-picker-actions";
+      const pickerSelectVisibleBtn = document.createElement("button");
+      pickerSelectVisibleBtn.type = "button";
+      pickerSelectVisibleBtn.className = "secondary";
+      pickerSelectVisibleBtn.textContent = "Select visible";
+      const pickerClearBtn = document.createElement("button");
+      pickerClearBtn.type = "button";
+      pickerClearBtn.className = "secondary";
+      pickerClearBtn.textContent = "Clear selected";
+      pickerActions.appendChild(pickerSelectVisibleBtn);
+      pickerActions.appendChild(pickerClearBtn);
+      pickerToolbar.appendChild(pickerActions);
+      pickerPanel.appendChild(pickerToolbar);
+
+      const pickerStatus = document.createElement("p");
+      pickerStatus.className = "recipe-image-picker-status";
+      pickerStatus.textContent = "Loading source images...";
+      pickerPanel.appendChild(pickerStatus);
+
+      const pickerList = document.createElement("div");
+      pickerList.className = "recipe-image-picker-list";
+      pickerPanel.appendChild(pickerList);
+
+      const pickerPagination = document.createElement("div");
+      pickerPagination.className = "recipe-image-picker-pagination";
+      const pickerPaginationMain = document.createElement("div");
+      pickerPaginationMain.className = "recipe-image-picker-pagination-main";
+      const pickerPrevBtn = document.createElement("button");
+      pickerPrevBtn.type = "button";
+      pickerPrevBtn.className = "secondary";
+      pickerPrevBtn.textContent = "Prev";
+      const pickerPageStatus = document.createElement("span");
+      pickerPageStatus.className = "recipe-image-picker-pagination-status";
+      pickerPageStatus.textContent = "Page 1 of 1";
+      const pickerNextBtn = document.createElement("button");
+      pickerNextBtn.type = "button";
+      pickerNextBtn.className = "secondary";
+      pickerNextBtn.textContent = "Next";
+      pickerPaginationMain.appendChild(pickerPrevBtn);
+      pickerPaginationMain.appendChild(pickerPageStatus);
+      pickerPaginationMain.appendChild(pickerNextBtn);
+      pickerPagination.appendChild(pickerPaginationMain);
+      const pickerPageSizeLabel = document.createElement("label");
+      pickerPageSizeLabel.className = "recipe-image-picker-pagination-size";
+      pickerPageSizeLabel.textContent = "Per page";
+      const pickerPageSizeSelect = document.createElement("select");
+      [
+        { value: "25", label: "25" },
+        { value: "50", label: "50" },
+        { value: "100", label: "100" },
+      ].forEach(function (optionDef) {
+        const option = document.createElement("option");
+        option.value = optionDef.value;
+        option.textContent = optionDef.label;
+        if (optionDef.value === "50") {
+          option.selected = true;
+        }
+        pickerPageSizeSelect.appendChild(option);
+      });
+      pickerPageSizeLabel.appendChild(pickerPageSizeSelect);
+      pickerPagination.appendChild(pickerPageSizeLabel);
+      pickerPanel.appendChild(pickerPagination);
+      selectedWrap.appendChild(pickerPanel);
+
+      const selectedManualDetails = document.createElement("details");
+      selectedManualDetails.className = "advanced-panel";
+      const selectedManualSummary = document.createElement("summary");
+      selectedManualSummary.textContent = "Manual selected image names";
+      selectedManualDetails.appendChild(selectedManualSummary);
       const selectedInput = document.createElement("textarea");
       selectedInput.className = "recipe-selected-images";
       selectedInput.rows = 4;
       selectedInput.placeholder = "image_001.png";
       selectedInput.value = Array.isArray(step.selected_images) ? step.selected_images.join("\n") : "";
-      selectedWrap.appendChild(selectedInput);
+      selectedManualDetails.appendChild(selectedInput);
+      selectedWrap.appendChild(selectedManualDetails);
       body.appendChild(selectedWrap);
 
       stepEl.appendChild(body);
       recipeListEl.appendChild(stepEl);
+
+      const pickerState = {
+        query: "",
+        page: 1,
+        pageSize: 50,
+        sourceImages: [],
+        selectedSet: new Set(
+          parseSelectedImageText(selectedInput.value).map(function (name) {
+            return name.toLowerCase();
+          })
+        ),
+      };
+
+      function syncSelectedTextareaFromSet() {
+        selectedInput.value = buildSelectedTextFromSet(pickerState.selectedSet, pickerState.sourceImages);
+      }
+
+      function syncSelectedSetFromTextarea() {
+        pickerState.selectedSet = new Set(
+          parseSelectedImageText(selectedInput.value).map(function (name) {
+            return name.toLowerCase();
+          })
+        );
+      }
+
+      function renderPickerList() {
+        const allImages = pickerState.sourceImages;
+        const filteredImages = allImages.filter(function (name) {
+          return !pickerState.query || String(name).toLowerCase().indexOf(pickerState.query) >= 0;
+        });
+        const filteredCount = filteredImages.length;
+        const pageCount = Math.max(1, Math.ceil(filteredCount / pickerState.pageSize));
+        if (pickerState.page > pageCount) {
+          pickerState.page = pageCount;
+        }
+        if (pickerState.page < 1) {
+          pickerState.page = 1;
+        }
+        const offsetStart = (pickerState.page - 1) * pickerState.pageSize;
+        const pageItems = filteredImages.slice(offsetStart, offsetStart + pickerState.pageSize);
+
+        pickerList.innerHTML = "";
+        if (!pageItems.length) {
+          const empty = document.createElement("p");
+          empty.className = "muted";
+          empty.textContent = filteredCount <= 0 ? "No images match this search." : "No images on this page.";
+          pickerList.appendChild(empty);
+        } else {
+          pageItems.forEach(function (name) {
+            const key = String(name).toLowerCase();
+            const row = document.createElement("label");
+            row.className = "recipe-image-picker-item";
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.checked = pickerState.selectedSet.has(key);
+            checkbox.addEventListener("change", function () {
+              if (checkbox.checked) {
+                pickerState.selectedSet.add(key);
+              } else {
+                pickerState.selectedSet.delete(key);
+              }
+              syncSelectedTextareaFromSet();
+              renderPickerList();
+            });
+            const text = document.createElement("code");
+            text.textContent = name;
+            row.appendChild(checkbox);
+            row.appendChild(text);
+            pickerList.appendChild(row);
+          });
+        }
+
+        if (pickerStatus) {
+          pickerStatus.textContent =
+            "Selected " +
+            pickerState.selectedSet.size +
+            " / " +
+            allImages.length +
+            " source images.";
+        }
+        pickerPageStatus.textContent =
+          filteredCount <= 0
+            ? "No images"
+            : "Page " + pickerState.page + " of " + pageCount + " • " + filteredCount + " match";
+        pickerPrevBtn.disabled = filteredCount <= 0 || pickerState.page <= 1;
+        pickerNextBtn.disabled = filteredCount <= 0 || pickerState.page >= pageCount;
+        pickerPagination.hidden = filteredCount <= pickerState.pageSize;
+        pickerSelectVisibleBtn.disabled = pageItems.length <= 0;
+      }
+
+      function refreshPickerFromDataset() {
+        const mode = modeSelect.value;
+        if (mode !== "selected") {
+          return;
+        }
+        const datasetId = selectedDatasetId();
+        if (!datasetId) {
+          pickerState.sourceImages = [];
+          pickerList.innerHTML = "";
+          pickerStatus.textContent = "Choose a source dataset first.";
+          pickerPagination.hidden = true;
+          pickerSelectVisibleBtn.disabled = true;
+          return;
+        }
+        pickerStatus.textContent = "Loading source images...";
+        loadSourceImages(datasetId).then(function (names) {
+          if (!stepEl.isConnected) {
+            return;
+          }
+          pickerState.sourceImages = names.slice();
+          renderPickerList();
+        });
+      }
+
+      stepEl.__refreshPicker = refreshPickerFromDataset;
 
       renderSettings(stepEl, step.settings || {}, transformSelect.value);
       updateSelectionUI(stepEl);
@@ -353,7 +654,63 @@
       });
       modeSelect.addEventListener("change", function () {
         updateSelectionUI(stepEl);
+        refreshPickerFromDataset();
       });
+      selectedInput.addEventListener("input", function () {
+        syncSelectedSetFromTextarea();
+        renderPickerList();
+      });
+      pickerSearchInput.addEventListener("input", function () {
+        pickerState.query = String(pickerSearchInput.value || "").trim().toLowerCase();
+        pickerState.page = 1;
+        renderPickerList();
+      });
+      pickerPageSizeSelect.addEventListener("change", function () {
+        const parsed = Number(pickerPageSizeSelect.value);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          return;
+        }
+        pickerState.pageSize = Math.floor(parsed);
+        pickerState.page = 1;
+        renderPickerList();
+      });
+      pickerPrevBtn.addEventListener("click", function () {
+        pickerState.page = Math.max(1, pickerState.page - 1);
+        renderPickerList();
+      });
+      pickerNextBtn.addEventListener("click", function () {
+        pickerState.page += 1;
+        renderPickerList();
+      });
+      pickerSelectVisibleBtn.addEventListener("click", function () {
+        const filteredImages = pickerState.sourceImages.filter(function (name) {
+          return !pickerState.query || String(name).toLowerCase().indexOf(pickerState.query) >= 0;
+        });
+        const offsetStart = (pickerState.page - 1) * pickerState.pageSize;
+        const pageItems = filteredImages.slice(offsetStart, offsetStart + pickerState.pageSize);
+        if (!pageItems.length) {
+          return;
+        }
+        const shouldSelect = pageItems.some(function (name) {
+          return !pickerState.selectedSet.has(String(name).toLowerCase());
+        });
+        pageItems.forEach(function (name) {
+          const key = String(name).toLowerCase();
+          if (shouldSelect) {
+            pickerState.selectedSet.add(key);
+          } else {
+            pickerState.selectedSet.delete(key);
+          }
+        });
+        syncSelectedTextareaFromSet();
+        renderPickerList();
+      });
+      pickerClearBtn.addEventListener("click", function () {
+        pickerState.selectedSet.clear();
+        syncSelectedTextareaFromSet();
+        renderPickerList();
+      });
+      refreshPickerFromDataset();
     }
 
     function serializeStep(stepEl) {
@@ -401,9 +758,23 @@
       return rows.map(serializeStep);
     }
 
+    function refreshAllStepPickers() {
+      Array.from(recipeListEl.querySelectorAll(".recipe-step-row")).forEach(function (stepEl) {
+        if (typeof stepEl.__refreshPicker === "function") {
+          stepEl.__refreshPicker();
+        }
+      });
+    }
+
     addStepBtn.addEventListener("click", function () {
       addStep({ transform: "flip_h", selection_mode: "fifo", selection_percent: 100, settings: {} });
     });
+
+    if (sourceDatasetSelect) {
+      sourceDatasetSelect.addEventListener("change", function () {
+        refreshAllStepPickers();
+      });
+    }
 
     formEl.addEventListener("submit", function (event) {
       const recipe = collectRecipe();

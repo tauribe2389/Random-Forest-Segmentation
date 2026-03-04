@@ -107,9 +107,23 @@
             </div>
             <div class="image-card-actions">
               <button type="button" class="table-action-btn secondary" data-inspect-image>
-                <span class="table-action-icon">i</span>
                 <span>Inspect</span>
               </button>
+              <form
+                method="post"
+                action="{{ url_for('labeler.delete_workspace_image', workspace_id=workspace.id) }}"
+                class="table-action-form"
+                data-delete-image-form
+              >
+                <input type="hidden" name="image_name" value="{{ card.image_name }}">
+                <button
+                  type="submit"
+                  class="table-action-btn danger"
+                  data-delete-image-name="{{ card.image_name }}"
+                >
+                  <span>Delete</span>
+                </button>
+              </form>
             </div>
           </div>
         </article>

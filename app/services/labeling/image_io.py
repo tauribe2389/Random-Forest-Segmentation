@@ -94,6 +94,10 @@ def mask_filename_for_class_id(image_stem: str, class_id: int) -> str:
     return f"{image_stem}__cid_{int(class_id)}.png"
 
 
+def frozen_mask_filename_for_class_id(image_stem: str, class_id: int) -> str:
+    return f"{image_stem}__cid_{int(class_id)}__frozen.png"
+
+
 def mask_filename(image_stem: str, class_name: str) -> str:
     return f"{image_stem}__{sanitize_class_name(class_name)}.png"
 

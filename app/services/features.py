@@ -200,9 +200,12 @@ def extract_feature_stack(
         names.append("sobel_gray")
 
     if config.use_lbp:
+        # Use integer grayscale values for LBP to avoid floating-point
+        # comparison artifacts and scikit-image warnings.
+        gray_lbp = np.clip(np.rint(gray * 255.0), 0.0, 255.0).astype(np.uint8)
         for radius in _normalized_lbp_radii(config):
             lbp = local_binary_pattern(
-                gray,
+                gray_lbp,
                 P=config.lbp_points,
                 R=radius,
                 method="uniform",

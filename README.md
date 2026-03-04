@@ -14,6 +14,7 @@ Model Foundry is a local-first Flask app that combines:
 - New augmentation workflow at `/augment/new`
 - COCO RLE support in training pipeline (enabled by default)
 - SME-aligned HTML/CSS shell and branding
+- Superpixel config schema draft for phased multi-algorithm rollout: `docs/superpixel_config_schema.md`
 
 ## Project Layout
 

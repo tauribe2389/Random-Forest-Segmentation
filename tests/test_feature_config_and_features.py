@@ -1,4 +1,5 @@
 import unittest
+import warnings
 
 import numpy as np
 
@@ -128,6 +129,39 @@ class FeatureExtractionTests(unittest.TestCase):
         self.assertIn("structure_tensor_coherence", names)
         self.assertIn("structure_tensor_orientation", names)
         self.assertIn("laws_L5E5_w7", names)
+
+    def test_extract_feature_stack_lbp_does_not_warn_on_float_image(self) -> None:
+        rng = np.random.default_rng(7)
+        image = rng.random((32, 32, 3), dtype=np.float32)
+        config = FeatureConfig(
+            use_rgb=False,
+            use_hsv=False,
+            use_lab=False,
+            gaussian_sigmas=[],
+            use_sobel=False,
+            use_lbp=True,
+            lbp_points=8,
+            lbp_radius=1,
+            lbp_radii=[1, 2],
+            use_gabor=False,
+            use_laws=False,
+            use_structure_tensor=False,
+            use_multiscale_local_stats=False,
+        )
+
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always")
+            stack, names = extract_feature_stack(image, config)
+
+        self.assertEqual(stack.shape[:2], image.shape[:2])
+        self.assertEqual(stack.shape[2], len(names))
+        lbp_float_warnings = [
+            item
+            for item in captured
+            if "local_binary_pattern" in str(item.message)
+            and "floating-point" in str(item.message)
+        ]
+        self.assertEqual(len(lbp_float_warnings), 0)
 
 
 if __name__ == "__main__":

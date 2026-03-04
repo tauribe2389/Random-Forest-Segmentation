@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import io
+import os
 import re
 import sqlite3
 import threading
@@ -42,16 +43,19 @@ from .services.labeling.class_schema import (
 from .services.labeling.image_io import (
     class_id_from_entry,
     ensure_dir,
+    frozen_mask_filename_for_class_id,
     image_path,
     iter_existing_mask_paths,
     list_images,
+    load_binary_mask,
+    load_image_size,
     mask_filename,
     mask_filename_for_class_id,
     safe_image_name,
     sanitize_class_name,
     save_binary_mask,
 )
-from .services.labeling.mask_state import ImageMaskState, selected_from_saved_masks
+from .services.labeling.mask_state import ImageMaskState
 from .services.labeling.slic_cache import clear_slic_cache, load_or_create_slic_cache
 from .services.storage import Storage
 
@@ -72,6 +76,38 @@ SLIC_DETAIL_PRESETS: dict[str, dict[str, float]] = {
     "low": {"n_segments": 700, "compactness": 12.0, "sigma": 1.2},
     "medium": {"n_segments": 1200, "compactness": 10.0, "sigma": 1.0},
     "high": {"n_segments": 2200, "compactness": 8.0, "sigma": 0.8},
+}
+SUPERPIXEL_ALGORITHMS = {"slic", "slico", "quickshift", "felzenszwalb"}
+QUICKSHIFT_DEFAULTS = {
+    "quickshift_ratio": 1.0,
+    "quickshift_kernel_size": 5,
+    "quickshift_max_dist": 10.0,
+    "quickshift_sigma": 0.0,
+}
+FELZENSZWALB_DEFAULTS = {
+    "felzenszwalb_scale": 100.0,
+    "felzenszwalb_sigma": 0.8,
+    "felzenszwalb_min_size": 50,
+}
+TEXTURE_DEFAULTS: dict[str, Any] = {
+    "texture_enabled": False,
+    "texture_mode": "append_to_color",
+    "texture_lbp_enabled": False,
+    "texture_lbp_points": 8,
+    "texture_lbp_radii": [1],
+    "texture_lbp_method": "uniform",
+    "texture_lbp_normalize": True,
+    "texture_gabor_enabled": False,
+    "texture_gabor_frequencies": [0.1, 0.2],
+    "texture_gabor_thetas": [0.0, 45.0, 90.0, 135.0],
+    "texture_gabor_bandwidth": 1.0,
+    "texture_gabor_include_real": False,
+    "texture_gabor_include_imag": False,
+    "texture_gabor_include_magnitude": True,
+    "texture_gabor_normalize": True,
+    "texture_weight_color": 1.0,
+    "texture_weight_lbp": 0.25,
+    "texture_weight_gabor": 0.25,
 }
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
@@ -205,6 +241,70 @@ def _dataset_categories(dataset: dict[str, Any]) -> list[str]:
     return names
 
 
+def _path_match_key(path_value: Any) -> str:
+    raw_value = str(path_value or "").strip()
+    if not raw_value:
+        return ""
+    try:
+        resolved = Path(raw_value).expanduser().resolve()
+    except OSError:
+        resolved = Path(raw_value).expanduser()
+    normalized = str(resolved).replace("\\", "/")
+    if os.name == "nt":
+        return normalized.lower()
+    return normalized
+
+
+def _analysis_image_references(workspace_id: int, image_path: Path) -> dict[str, list[int]]:
+    storage = _storage()
+    target_key = _path_match_key(image_path)
+    active_job_ids: set[int] = set()
+    active_run_ids: set[int] = set()
+    completed_run_ids: set[int] = set()
+
+    jobs = storage.list_jobs(
+        workspace_id=workspace_id,
+        job_type="analysis",
+        statuses=["queued", "running"],
+        limit=2000,
+    )
+    for job in jobs:
+        payload = job.get("payload_json")
+        if not isinstance(payload, dict):
+            continue
+        input_images = payload.get("input_images")
+        if not isinstance(input_images, list):
+            continue
+        if any(_path_match_key(item) == target_key for item in input_images):
+            try:
+                active_job_ids.add(int(job["id"]))
+            except (TypeError, ValueError, KeyError):
+                continue
+
+    runs = storage.list_runs(workspace_id=workspace_id, limit=2000)
+    for run in runs:
+        input_images = run.get("input_images_json")
+        if not isinstance(input_images, list):
+            continue
+        if not any(_path_match_key(item) == target_key for item in input_images):
+            continue
+        try:
+            run_id = int(run["id"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        status = str(run.get("status", "")).strip().lower()
+        if status in {"queued", "running"}:
+            active_run_ids.add(run_id)
+        else:
+            completed_run_ids.add(run_id)
+
+    return {
+        "active_job_ids": sorted(active_job_ids),
+        "active_run_ids": sorted(active_run_ids),
+        "completed_run_ids": sorted(completed_run_ids),
+    }
+
+
 def _to_relative_under_base(path_value: str) -> str | None:
     base = Path(current_app.config["BASE_DIR"]).resolve()
     path = Path(path_value)
@@ -278,6 +378,16 @@ def _normalize_colorspace(value: Any) -> str:
     return "lab"
 
 
+def _normalize_slic_algorithm(value: Any, *, fallback: str = "slic") -> str:
+    candidate = str(value or "").strip().lower()
+    if candidate in SUPERPIXEL_ALGORITHMS:
+        return candidate
+    fallback_candidate = str(fallback or "slic").strip().lower()
+    if fallback_candidate in SUPERPIXEL_ALGORITHMS:
+        return fallback_candidate
+    return "slic"
+
+
 def _normalize_slic_values(
     *,
     n_segments: Any,
@@ -289,7 +399,7 @@ def _normalize_slic_values(
         normalized_segments = int(float(n_segments))
     except (TypeError, ValueError):
         normalized_segments = 1200
-    normalized_segments = max(50, min(5000, normalized_segments))
+    normalized_segments = max(50, min(40000, normalized_segments))
 
     try:
         normalized_compactness = float(compactness)
@@ -307,23 +417,320 @@ def _normalize_slic_values(
     return normalized_segments, normalized_compactness, normalized_sigma, normalized_colorspace
 
 
+def _normalize_quickshift_values(
+    *,
+    ratio: Any,
+    kernel_size: Any,
+    max_dist: Any,
+    sigma: Any,
+) -> tuple[float, int, float, float]:
+    try:
+        normalized_ratio = float(ratio)
+    except (TypeError, ValueError):
+        normalized_ratio = QUICKSHIFT_DEFAULTS["quickshift_ratio"]
+    normalized_ratio = max(0.01, min(20.0, normalized_ratio))
+
+    try:
+        normalized_kernel_size = int(float(kernel_size))
+    except (TypeError, ValueError):
+        normalized_kernel_size = int(QUICKSHIFT_DEFAULTS["quickshift_kernel_size"])
+    normalized_kernel_size = max(1, min(100, normalized_kernel_size))
+
+    try:
+        normalized_max_dist = float(max_dist)
+    except (TypeError, ValueError):
+        normalized_max_dist = QUICKSHIFT_DEFAULTS["quickshift_max_dist"]
+    normalized_max_dist = max(0.01, min(200.0, normalized_max_dist))
+
+    try:
+        normalized_sigma = float(sigma)
+    except (TypeError, ValueError):
+        normalized_sigma = QUICKSHIFT_DEFAULTS["quickshift_sigma"]
+    normalized_sigma = max(0.0, min(10.0, normalized_sigma))
+    return normalized_ratio, normalized_kernel_size, normalized_max_dist, normalized_sigma
+
+
+def _normalize_felzenszwalb_values(
+    *,
+    scale: Any,
+    sigma: Any,
+    min_size: Any,
+) -> tuple[float, float, int]:
+    try:
+        normalized_scale = float(scale)
+    except (TypeError, ValueError):
+        normalized_scale = FELZENSZWALB_DEFAULTS["felzenszwalb_scale"]
+    normalized_scale = max(0.01, min(10000.0, normalized_scale))
+
+    try:
+        normalized_sigma = float(sigma)
+    except (TypeError, ValueError):
+        normalized_sigma = FELZENSZWALB_DEFAULTS["felzenszwalb_sigma"]
+    normalized_sigma = max(0.0, min(10.0, normalized_sigma))
+
+    try:
+        normalized_min_size = int(float(min_size))
+    except (TypeError, ValueError):
+        normalized_min_size = int(FELZENSZWALB_DEFAULTS["felzenszwalb_min_size"])
+    normalized_min_size = max(2, min(50000, normalized_min_size))
+    return normalized_scale, normalized_sigma, normalized_min_size
+
+
+def _coerce_bool(value: Any, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    candidate = str(value).strip().lower()
+    if candidate in {"1", "true", "yes", "on", "y"}:
+        return True
+    if candidate in {"0", "false", "no", "off", "n"}:
+        return False
+    return default
+
+
+def _normalize_int_list(
+    value: Any,
+    *,
+    fallback: list[int],
+    min_value: int,
+    max_value: int,
+) -> list[int]:
+    raw_items: list[Any]
+    if isinstance(value, list):
+        raw_items = list(value)
+    elif isinstance(value, tuple):
+        raw_items = list(value)
+    elif isinstance(value, str):
+        raw_items = [item.strip() for item in value.split(",") if item.strip()]
+    else:
+        raw_items = []
+    normalized: list[int] = []
+    seen: set[int] = set()
+    for item in raw_items:
+        try:
+            parsed = int(float(item))
+        except (TypeError, ValueError):
+            continue
+        parsed = max(min_value, min(max_value, parsed))
+        if parsed in seen:
+            continue
+        seen.add(parsed)
+        normalized.append(parsed)
+    if normalized:
+        return normalized
+    return list(fallback)
+
+
+def _normalize_float_list(
+    value: Any,
+    *,
+    fallback: list[float],
+    min_value: float,
+    max_value: float,
+) -> list[float]:
+    raw_items: list[Any]
+    if isinstance(value, list):
+        raw_items = list(value)
+    elif isinstance(value, tuple):
+        raw_items = list(value)
+    elif isinstance(value, str):
+        raw_items = [item.strip() for item in value.split(",") if item.strip()]
+    else:
+        raw_items = []
+    normalized: list[float] = []
+    for item in raw_items:
+        try:
+            parsed = float(item)
+        except (TypeError, ValueError):
+            continue
+        parsed = max(min_value, min(max_value, parsed))
+        normalized.append(parsed)
+    if normalized:
+        return normalized
+    return list(fallback)
+
+
+def _coerce_float(value: Any, *, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _coerce_int(value: Any, *, default: int) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _normalize_texture_settings(
+    values: dict[str, Any],
+    *,
+    fallback: dict[str, Any] | None = None,
+    algorithm: str = "slic",
+) -> dict[str, Any]:
+    base = dict(TEXTURE_DEFAULTS)
+    if isinstance(fallback, dict):
+        base.update(fallback)
+
+    texture_mode = str(values.get("texture_mode", base["texture_mode"])).strip().lower() or "append_to_color"
+    if texture_mode not in {"append_to_color"}:
+        texture_mode = "append_to_color"
+    texture_lbp_method = str(values.get("texture_lbp_method", base["texture_lbp_method"])).strip().lower() or "uniform"
+    if texture_lbp_method not in {"uniform", "ror", "default"}:
+        texture_lbp_method = "uniform"
+
+    texture_lbp_radii = _normalize_int_list(
+        values.get("texture_lbp_radii", values.get("texture_lbp_radii_json", base["texture_lbp_radii"])),
+        fallback=[int(item) for item in base["texture_lbp_radii"]],
+        min_value=1,
+        max_value=64,
+    )
+    texture_gabor_frequencies = _normalize_float_list(
+        values.get(
+            "texture_gabor_frequencies",
+            values.get("texture_gabor_frequencies_json", base["texture_gabor_frequencies"]),
+        ),
+        fallback=[float(item) for item in base["texture_gabor_frequencies"]],
+        min_value=0.001,
+        max_value=1.0,
+    )
+    texture_gabor_thetas = _normalize_float_list(
+        values.get("texture_gabor_thetas", values.get("texture_gabor_thetas_json", base["texture_gabor_thetas"])),
+        fallback=[float(item) for item in base["texture_gabor_thetas"]],
+        min_value=0.0,
+        max_value=179.999,
+    )
+
+    normalized = {
+        "texture_enabled": _coerce_bool(values.get("texture_enabled"), default=bool(base["texture_enabled"])),
+        "texture_mode": texture_mode,
+        "texture_lbp_enabled": _coerce_bool(values.get("texture_lbp_enabled"), default=bool(base["texture_lbp_enabled"])),
+        "texture_lbp_points": max(
+            4,
+            min(
+                128,
+                _coerce_int(values.get("texture_lbp_points", base["texture_lbp_points"]), default=int(base["texture_lbp_points"])),
+            ),
+        ),
+        "texture_lbp_radii": texture_lbp_radii,
+        "texture_lbp_method": texture_lbp_method,
+        "texture_lbp_normalize": _coerce_bool(values.get("texture_lbp_normalize"), default=bool(base["texture_lbp_normalize"])),
+        "texture_gabor_enabled": _coerce_bool(values.get("texture_gabor_enabled"), default=bool(base["texture_gabor_enabled"])),
+        "texture_gabor_frequencies": texture_gabor_frequencies,
+        "texture_gabor_thetas": texture_gabor_thetas,
+        "texture_gabor_bandwidth": max(
+            0.01,
+            min(
+                10.0,
+                _coerce_float(
+                    values.get("texture_gabor_bandwidth", base["texture_gabor_bandwidth"]),
+                    default=float(base["texture_gabor_bandwidth"]),
+                ),
+            ),
+        ),
+        "texture_gabor_include_real": _coerce_bool(
+            values.get("texture_gabor_include_real"),
+            default=bool(base["texture_gabor_include_real"]),
+        ),
+        "texture_gabor_include_imag": _coerce_bool(
+            values.get("texture_gabor_include_imag"),
+            default=bool(base["texture_gabor_include_imag"]),
+        ),
+        "texture_gabor_include_magnitude": _coerce_bool(
+            values.get("texture_gabor_include_magnitude"),
+            default=bool(base["texture_gabor_include_magnitude"]),
+        ),
+        "texture_gabor_normalize": _coerce_bool(
+            values.get("texture_gabor_normalize"),
+            default=bool(base["texture_gabor_normalize"]),
+        ),
+        "texture_weight_color": max(
+            0.01,
+            min(
+                10.0,
+                _coerce_float(
+                    values.get("texture_weight_color", base["texture_weight_color"]),
+                    default=float(base["texture_weight_color"]),
+                ),
+            ),
+        ),
+        "texture_weight_lbp": max(
+            0.0,
+            min(
+                10.0,
+                _coerce_float(
+                    values.get("texture_weight_lbp", base["texture_weight_lbp"]),
+                    default=float(base["texture_weight_lbp"]),
+                ),
+            ),
+        ),
+        "texture_weight_gabor": max(
+            0.0,
+            min(
+                10.0,
+                _coerce_float(
+                    values.get("texture_weight_gabor", base["texture_weight_gabor"]),
+                    default=float(base["texture_weight_gabor"]),
+                ),
+            ),
+        ),
+    }
+    if normalized["texture_gabor_enabled"] and not (
+        normalized["texture_gabor_include_real"]
+        or normalized["texture_gabor_include_imag"]
+        or normalized["texture_gabor_include_magnitude"]
+    ):
+        normalized["texture_gabor_include_magnitude"] = True
+    if normalized["texture_enabled"] and not (normalized["texture_lbp_enabled"] or normalized["texture_gabor_enabled"]):
+        normalized["texture_enabled"] = False
+    if str(algorithm or "").strip().lower() not in {"slic", "slico"}:
+        normalized["texture_enabled"] = False
+    return normalized
+
+
 def _project_default_slic(project: dict[str, Any]) -> dict[str, Any]:
     detail_level = _normalize_detail_level(project.get("slic_detail_level"), fallback="medium")
+    algorithm = _normalize_slic_algorithm(project.get("slic_algorithm"), fallback="slic")
     n_segments, compactness, sigma, colorspace = _normalize_slic_values(
         n_segments=project.get("slic_n_segments"),
         compactness=project.get("slic_compactness"),
         sigma=project.get("slic_sigma"),
         colorspace=project.get("slic_colorspace"),
     )
+    quickshift_ratio, quickshift_kernel_size, quickshift_max_dist, quickshift_sigma = _normalize_quickshift_values(
+        ratio=project.get("quickshift_ratio"),
+        kernel_size=project.get("quickshift_kernel_size"),
+        max_dist=project.get("quickshift_max_dist"),
+        sigma=project.get("quickshift_sigma"),
+    )
+    felzenszwalb_scale, felzenszwalb_sigma, felzenszwalb_min_size = _normalize_felzenszwalb_values(
+        scale=project.get("felzenszwalb_scale"),
+        sigma=project.get("felzenszwalb_sigma"),
+        min_size=project.get("felzenszwalb_min_size"),
+    )
+    texture_settings = _normalize_texture_settings(project, algorithm=algorithm)
     preset_name = str(project.get("slic_preset_name", "medium")).strip().lower() or "medium"
     return {
-        "algorithm": "slic",
+        "algorithm": algorithm,
         "preset_name": preset_name,
         "detail_level": detail_level,
         "n_segments": n_segments,
         "compactness": compactness,
         "sigma": sigma,
         "colorspace": colorspace,
+        "quickshift_ratio": quickshift_ratio,
+        "quickshift_kernel_size": quickshift_kernel_size,
+        "quickshift_max_dist": quickshift_max_dist,
+        "quickshift_sigma": quickshift_sigma,
+        "felzenszwalb_scale": felzenszwalb_scale,
+        "felzenszwalb_sigma": felzenszwalb_sigma,
+        "felzenszwalb_min_size": felzenszwalb_min_size,
+        **texture_settings,
     }
 
 
@@ -337,11 +744,28 @@ def _effective_slic_for_image(project: dict[str, Any], image_name: str) -> dict[
         }
 
     detail_level = _normalize_detail_level(override.get("detail_level"), fallback=project_default["detail_level"])
+    algorithm = _normalize_slic_algorithm(override.get("slic_algorithm"), fallback=project_default["algorithm"])
     n_segments, compactness, sigma, colorspace = _normalize_slic_values(
         n_segments=override.get("n_segments"),
         compactness=override.get("compactness"),
         sigma=override.get("sigma"),
         colorspace=override.get("colorspace"),
+    )
+    quickshift_ratio, quickshift_kernel_size, quickshift_max_dist, quickshift_sigma = _normalize_quickshift_values(
+        ratio=override.get("quickshift_ratio", project_default["quickshift_ratio"]),
+        kernel_size=override.get("quickshift_kernel_size", project_default["quickshift_kernel_size"]),
+        max_dist=override.get("quickshift_max_dist", project_default["quickshift_max_dist"]),
+        sigma=override.get("quickshift_sigma", project_default["quickshift_sigma"]),
+    )
+    felzenszwalb_scale, felzenszwalb_sigma, felzenszwalb_min_size = _normalize_felzenszwalb_values(
+        scale=override.get("felzenszwalb_scale", project_default["felzenszwalb_scale"]),
+        sigma=override.get("felzenszwalb_sigma", project_default["felzenszwalb_sigma"]),
+        min_size=override.get("felzenszwalb_min_size", project_default["felzenszwalb_min_size"]),
+    )
+    texture_settings = _normalize_texture_settings(
+        override,
+        fallback=project_default,
+        algorithm=algorithm,
     )
     preset_name = str(override.get("preset_name", "custom")).strip().lower() or "custom"
     if preset_name in SLIC_DETAIL_PRESETS:
@@ -351,7 +775,7 @@ def _effective_slic_for_image(project: dict[str, Any], image_name: str) -> dict[
     else:
         preset_mode = "custom"
     return {
-        "algorithm": "slic",
+        "algorithm": algorithm,
         "preset_mode": preset_mode,
         "preset_name": preset_name,
         "detail_level": detail_level,
@@ -359,6 +783,14 @@ def _effective_slic_for_image(project: dict[str, Any], image_name: str) -> dict[
         "compactness": compactness,
         "sigma": sigma,
         "colorspace": colorspace,
+        "quickshift_ratio": quickshift_ratio,
+        "quickshift_kernel_size": quickshift_kernel_size,
+        "quickshift_max_dist": quickshift_max_dist,
+        "quickshift_sigma": quickshift_sigma,
+        "felzenszwalb_scale": felzenszwalb_scale,
+        "felzenszwalb_sigma": felzenszwalb_sigma,
+        "felzenszwalb_min_size": felzenszwalb_min_size,
+        **texture_settings,
     }
 
 
@@ -367,34 +799,60 @@ def _resolve_requested_slic_settings(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     project_default = _project_default_slic(project)
+    requested_algorithm = _normalize_slic_algorithm(
+        payload.get("algorithm"),
+        fallback=project_default["algorithm"],
+    )
     preset_mode = str(payload.get("preset_mode", "dataset_default")).strip().lower()
     detail_level = _normalize_detail_level(payload.get("detail_level"), fallback=project_default["detail_level"])
 
     if preset_mode == "dataset_default":
+        texture_settings = _normalize_texture_settings(
+            project_default,
+            fallback=project_default,
+            algorithm=requested_algorithm,
+        )
         return {
             **project_default,
+            "algorithm": requested_algorithm,
             "preset_mode": "dataset_default",
             "preset_name": "dataset_default",
+            **texture_settings,
         }
 
     if preset_mode == "detail":
-        preset = SLIC_DETAIL_PRESETS[detail_level]
-        n_segments, compactness, sigma, colorspace = _normalize_slic_values(
-            n_segments=preset["n_segments"],
-            compactness=preset["compactness"],
-            sigma=preset["sigma"],
-            colorspace=payload.get("colorspace", project_default["colorspace"]),
-        )
-        return {
-            "algorithm": "slic",
-            "preset_mode": "detail",
-            "preset_name": detail_level,
-            "detail_level": detail_level,
-            "n_segments": n_segments,
-            "compactness": compactness,
-            "sigma": sigma,
-            "colorspace": colorspace,
-        }
+        if requested_algorithm in {"slic", "slico"}:
+            preset = SLIC_DETAIL_PRESETS[detail_level]
+            n_segments, compactness, sigma, colorspace = _normalize_slic_values(
+                n_segments=preset["n_segments"],
+                compactness=preset["compactness"],
+                sigma=preset["sigma"],
+                colorspace=payload.get("colorspace", project_default["colorspace"]),
+            )
+            texture_settings = _normalize_texture_settings(
+                payload,
+                fallback=project_default,
+                algorithm=requested_algorithm,
+            )
+            return {
+                "algorithm": requested_algorithm,
+                "preset_mode": "detail",
+                "preset_name": detail_level,
+                "detail_level": detail_level,
+                "n_segments": n_segments,
+                "compactness": compactness,
+                "sigma": sigma,
+                "colorspace": colorspace,
+                "quickshift_ratio": project_default["quickshift_ratio"],
+                "quickshift_kernel_size": project_default["quickshift_kernel_size"],
+                "quickshift_max_dist": project_default["quickshift_max_dist"],
+                "quickshift_sigma": project_default["quickshift_sigma"],
+                "felzenszwalb_scale": project_default["felzenszwalb_scale"],
+                "felzenszwalb_sigma": project_default["felzenszwalb_sigma"],
+                "felzenszwalb_min_size": project_default["felzenszwalb_min_size"],
+                **texture_settings,
+            }
+        preset_mode = "custom"
 
     n_segments, compactness, sigma, colorspace = _normalize_slic_values(
         n_segments=payload.get("n_segments"),
@@ -402,15 +860,39 @@ def _resolve_requested_slic_settings(
         sigma=payload.get("sigma"),
         colorspace=payload.get("colorspace", project_default["colorspace"]),
     )
+    quickshift_ratio, quickshift_kernel_size, quickshift_max_dist, quickshift_sigma = _normalize_quickshift_values(
+        ratio=payload.get("quickshift_ratio", project_default["quickshift_ratio"]),
+        kernel_size=payload.get("quickshift_kernel_size", project_default["quickshift_kernel_size"]),
+        max_dist=payload.get("quickshift_max_dist", project_default["quickshift_max_dist"]),
+        sigma=payload.get("quickshift_sigma", project_default["quickshift_sigma"]),
+    )
+    felzenszwalb_scale, felzenszwalb_sigma, felzenszwalb_min_size = _normalize_felzenszwalb_values(
+        scale=payload.get("felzenszwalb_scale", project_default["felzenszwalb_scale"]),
+        sigma=payload.get("felzenszwalb_sigma", project_default["felzenszwalb_sigma"]),
+        min_size=payload.get("felzenszwalb_min_size", project_default["felzenszwalb_min_size"]),
+    )
+    texture_settings = _normalize_texture_settings(
+        payload,
+        fallback=project_default,
+        algorithm=requested_algorithm,
+    )
     return {
-        "algorithm": "slic",
-        "preset_mode": "custom",
+        "algorithm": requested_algorithm,
+        "preset_mode": preset_mode if preset_mode == "custom" else "custom",
         "preset_name": "custom",
         "detail_level": detail_level,
         "n_segments": n_segments,
         "compactness": compactness,
         "sigma": sigma,
         "colorspace": colorspace,
+        "quickshift_ratio": quickshift_ratio,
+        "quickshift_kernel_size": quickshift_kernel_size,
+        "quickshift_max_dist": quickshift_max_dist,
+        "quickshift_sigma": quickshift_sigma,
+        "felzenszwalb_scale": felzenszwalb_scale,
+        "felzenszwalb_sigma": felzenszwalb_sigma,
+        "felzenszwalb_min_size": felzenszwalb_min_size,
+        **texture_settings,
     }
 
 
@@ -422,11 +904,7 @@ def _to_int(value: Any) -> int | None:
 
 
 def _is_truthy(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return False
-    return str(value).strip().lower() in {"1", "true", "yes", "on", "y"}
+    return _coerce_bool(value, default=False)
 
 
 def _normalize_selected_ids(raw_ids: Any, *, max_count: int = 20000) -> list[int]:
@@ -555,11 +1033,77 @@ def _clear_project_image_state(project_id: int, image_name: str) -> None:
             del bucket[target_key]
 
 
+def _loaded_project_image_state(project_id: int, image_name: str) -> ImageMaskState | None:
+    sid = _labeler_session_id()
+    safe_name = safe_image_name(image_name)
+    state_key = _state_key(project_id, safe_name)
+    with STATE_LOCK:
+        return SESSION_STATES.get(sid, {}).get(state_key)
+
+
+def _frozen_mask_path(masks_dir: Path, image_stem: str, class_id: int) -> Path:
+    return masks_dir / frozen_mask_filename_for_class_id(image_stem, class_id)
+
+
 def _mask_files_for_image(project: dict[str, Any], image_name: str) -> list[Path]:
     classes = _project_classes(project)
     masks_dir = _project_masks_dir(project)
     stem = Path(safe_image_name(image_name)).stem
     return iter_existing_mask_paths(masks_dir, stem, classes)
+
+
+def _frozen_mask_files_for_image(project: dict[str, Any], image_name: str) -> list[Path]:
+    classes = _project_classes(project)
+    masks_dir = _project_masks_dir(project)
+    stem = Path(safe_image_name(image_name)).stem
+    frozen_paths: list[Path] = []
+    for class_entry in classes:
+        class_id = class_id_from_entry(class_entry)
+        if class_id is None:
+            continue
+        mask_path = _frozen_mask_path(masks_dir, stem, int(class_id))
+        if mask_path.exists() and mask_path.is_file():
+            frozen_paths.append(mask_path)
+    return frozen_paths
+
+
+def _all_mask_files_for_image(project: dict[str, Any], image_name: str) -> list[Path]:
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for mask_path in (*_mask_files_for_image(project, image_name), *_frozen_mask_files_for_image(project, image_name)):
+        key = str(mask_path.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(mask_path)
+    return deduped
+
+
+def _project_is_bootstrap_dataset(project: dict[str, Any]) -> bool:
+    if str(project.get("kind", "")).strip().lower() != "dataset":
+        return False
+    try:
+        project_root = Path(str(project.get("project_dir", ""))).resolve()
+    except OSError:
+        return False
+    manifest_path = (project_root / "bootstrap" / "bootstrap_manifest.json").resolve()
+    return manifest_path.exists() and manifest_path.is_file()
+
+
+def _project_has_frozen_masks(project: dict[str, Any], image_name: str) -> bool:
+    return bool(_frozen_mask_files_for_image(project, image_name))
+
+
+def _resolve_recompute_freeze_masks(
+    project: dict[str, Any],
+    payload: dict[str, Any],
+    target_images: list[str],
+) -> bool:
+    if "freeze_masks" in payload:
+        return _is_truthy(payload.get("freeze_masks"))
+    if _project_is_bootstrap_dataset(project):
+        return True
+    return any(_project_has_frozen_masks(project, image_name) for image_name in target_images)
 
 
 def _image_file_cards(project: dict[str, Any]) -> list[dict[str, Any]]:
@@ -623,6 +1167,127 @@ def _get_dataset_project_or_404(workspace_id: int, dataset_id: int) -> tuple[dic
     return workspace, dataset_project
 
 
+def _load_frozen_masks(
+    image_name: str,
+    classes: list[dict[str, Any]],
+    *,
+    expected_shape: tuple[int, int],
+    masks_dir: Path,
+) -> dict[int, np.ndarray]:
+    stem = Path(image_name).stem
+    frozen_masks: dict[int, np.ndarray] = {}
+
+    for class_entry in classes:
+        class_id = class_id_from_entry(class_entry)
+        if class_id is None:
+            continue
+        mask_path = _frozen_mask_path(masks_dir, stem, int(class_id))
+        if not mask_path.exists():
+            continue
+        try:
+            mask = load_binary_mask(mask_path, expected_shape=expected_shape)
+        except ValueError:
+            continue
+        if not mask.any():
+            continue
+        frozen_masks[int(class_id)] = mask
+
+    return frozen_masks
+
+
+def _editable_selected_from_saved_masks(
+    image_name: str,
+    classes: list[dict[str, Any]],
+    segments: np.ndarray,
+    *,
+    masks_dir: Path,
+    frozen_masks: dict[int, np.ndarray] | None = None,
+) -> dict[int, set[int]]:
+    stem = Path(image_name).stem
+    selected: dict[int, set[int]] = {}
+    shape = tuple(segments.shape)
+    frozen_lookup = frozen_masks or {}
+
+    for class_entry in classes:
+        class_id = class_id_from_entry(class_entry)
+        if class_id is None:
+            continue
+        class_name = str(class_entry.get("name", "")).strip()
+        mask_path = masks_dir / mask_filename_for_class_id(stem, int(class_id))
+        if not mask_path.exists() and class_name:
+            mask_path = masks_dir / mask_filename(stem, class_name)
+        if not mask_path.exists():
+            selected[int(class_id)] = set()
+            continue
+        try:
+            mask = load_binary_mask(mask_path, expected_shape=shape)
+        except ValueError:
+            selected[int(class_id)] = set()
+            continue
+        frozen_mask = frozen_lookup.get(int(class_id))
+        if isinstance(frozen_mask, np.ndarray) and tuple(frozen_mask.shape) == shape:
+            mask = mask & (~frozen_mask)
+        if not mask.any():
+            selected[int(class_id)] = set()
+            continue
+        ids = np.unique(segments[mask])
+        selected[int(class_id)] = set(int(v) for v in ids.tolist())
+    return selected
+
+
+def _freeze_existing_masks_for_image(project: dict[str, Any], image_name: str) -> int:
+    classes = _project_classes(project)
+    if not classes:
+        return 0
+    masks_dir = _project_masks_dir(project)
+    safe_name = safe_image_name(image_name)
+    stem = Path(safe_name).stem
+    loaded_state = _loaded_project_image_state(int(project["id"]), safe_name)
+
+    try:
+        expected_shape = load_image_size(image_path(_project_images_dir(project), safe_name))
+    except FileNotFoundError:
+        return 0
+
+    frozen_written = 0
+    for class_entry in classes:
+        class_id = class_id_from_entry(class_entry)
+        if class_id is None:
+            continue
+        class_name = str(class_entry.get("name", "")).strip()
+        base_mask_path = masks_dir / mask_filename_for_class_id(stem, int(class_id))
+        legacy_mask_path = masks_dir / mask_filename(stem, class_name) if class_name else None
+        frozen_path = _frozen_mask_path(masks_dir, stem, int(class_id))
+
+        merged_mask: np.ndarray | None = None
+        if loaded_state is not None:
+            with STATE_LOCK:
+                live_mask = loaded_state.class_mask(int(class_id)).copy()
+            if tuple(live_mask.shape) == tuple(expected_shape):
+                merged_mask = live_mask
+
+        candidate_paths: list[Path] = []
+        for candidate in (base_mask_path, legacy_mask_path, frozen_path):
+            if candidate is None:
+                continue
+            if candidate.exists() and candidate.is_file():
+                candidate_paths.append(candidate)
+        for candidate_path in candidate_paths:
+            try:
+                mask_bool = load_binary_mask(candidate_path, expected_shape=expected_shape)
+            except ValueError:
+                continue
+            if merged_mask is None:
+                merged_mask = mask_bool.copy()
+            else:
+                merged_mask |= mask_bool
+        if merged_mask is None or not np.any(merged_mask):
+            continue
+        save_binary_mask(merged_mask, frozen_path)
+        frozen_written += 1
+    return frozen_written
+
+
 def _get_or_create_state(
     project: dict[str, Any],
     image_name: str,
@@ -645,13 +1310,55 @@ def _get_or_create_state(
     segments, _ = load_or_create_slic_cache(
         img_path,
         cache_dir,
+        algorithm=str(slic_settings["algorithm"]),
         n_segments=int(slic_settings["n_segments"]),
         compactness=float(slic_settings["compactness"]),
         sigma=float(slic_settings["sigma"]),
         colorspace=str(slic_settings["colorspace"]),
+        quickshift_ratio=float(slic_settings["quickshift_ratio"]),
+        quickshift_kernel_size=int(slic_settings["quickshift_kernel_size"]),
+        quickshift_max_dist=float(slic_settings["quickshift_max_dist"]),
+        quickshift_sigma=float(slic_settings["quickshift_sigma"]),
+        felzenszwalb_scale=float(slic_settings["felzenszwalb_scale"]),
+        felzenszwalb_sigma=float(slic_settings["felzenszwalb_sigma"]),
+        felzenszwalb_min_size=int(slic_settings["felzenszwalb_min_size"]),
+        texture_enabled=bool(slic_settings["texture_enabled"]),
+        texture_mode=str(slic_settings["texture_mode"]),
+        texture_lbp_enabled=bool(slic_settings["texture_lbp_enabled"]),
+        texture_lbp_points=int(slic_settings["texture_lbp_points"]),
+        texture_lbp_radii=list(slic_settings["texture_lbp_radii"]),
+        texture_lbp_method=str(slic_settings["texture_lbp_method"]),
+        texture_lbp_normalize=bool(slic_settings["texture_lbp_normalize"]),
+        texture_gabor_enabled=bool(slic_settings["texture_gabor_enabled"]),
+        texture_gabor_frequencies=list(slic_settings["texture_gabor_frequencies"]),
+        texture_gabor_thetas=list(slic_settings["texture_gabor_thetas"]),
+        texture_gabor_bandwidth=float(slic_settings["texture_gabor_bandwidth"]),
+        texture_gabor_include_real=bool(slic_settings["texture_gabor_include_real"]),
+        texture_gabor_include_imag=bool(slic_settings["texture_gabor_include_imag"]),
+        texture_gabor_include_magnitude=bool(slic_settings["texture_gabor_include_magnitude"]),
+        texture_gabor_normalize=bool(slic_settings["texture_gabor_normalize"]),
+        texture_weight_color=float(slic_settings["texture_weight_color"]),
+        texture_weight_lbp=float(slic_settings["texture_weight_lbp"]),
+        texture_weight_gabor=float(slic_settings["texture_weight_gabor"]),
     )
-    selected = selected_from_saved_masks(safe_name, classes, segments, masks_dir)
-    created = ImageMaskState(segments=segments, selected=selected)
+    frozen_masks = _load_frozen_masks(
+        safe_name,
+        classes,
+        expected_shape=tuple(segments.shape),
+        masks_dir=masks_dir,
+    )
+    editable_selected = _editable_selected_from_saved_masks(
+        safe_name,
+        classes,
+        segments,
+        masks_dir=masks_dir,
+        frozen_masks=frozen_masks,
+    )
+    created = ImageMaskState(
+        segments=segments,
+        selected=editable_selected,
+        frozen_masks=frozen_masks,
+    )
 
     with STATE_LOCK:
         bucket = SESSION_STATES.setdefault(sid, {})
@@ -695,6 +1402,14 @@ def _filmstrip_items(
     for candidate in images:
         stem = Path(candidate).stem
         is_labeled = bool(iter_existing_mask_paths(masks_dir, stem, classes))
+        if not is_labeled:
+            for class_entry in classes:
+                class_id = class_id_from_entry(class_entry)
+                if class_id is None:
+                    continue
+                if _frozen_mask_path(masks_dir, stem, int(class_id)).exists():
+                    is_labeled = True
+                    break
         items.append(
             {
                 "image_name": candidate,
@@ -729,6 +1444,7 @@ def _render_labeler_page(
         abort(400, description="No classes configured for this project.")
     project_default_slic = _project_default_slic(project)
     current_slic = _effective_slic_for_image(project, safe_name)
+    freeze_masks_default = _resolve_recompute_freeze_masks(project, {}, [safe_name])
     default_class_id = int(classes[0]["id"])
     class_name_map = class_name_by_id({"classes": classes})
     with STATE_LOCK:
@@ -756,6 +1472,7 @@ def _render_labeler_page(
         filmstrip_items=filmstrip_items,
         slic_default=project_default_slic,
         slic_current=current_slic,
+        freeze_masks_default=freeze_masks_default,
         slic_detail_presets=SLIC_DETAIL_PRESETS,
         project=project,
     )
@@ -796,10 +1513,36 @@ def _api_project_boundary(project: dict[str, Any], image_name: str):
     _, boundary_path = load_or_create_slic_cache(
         img_path,
         _project_cache_dir(project),
+        algorithm=str(slic_settings["algorithm"]),
         n_segments=int(slic_settings["n_segments"]),
         compactness=float(slic_settings["compactness"]),
         sigma=float(slic_settings["sigma"]),
         colorspace=str(slic_settings["colorspace"]),
+        quickshift_ratio=float(slic_settings["quickshift_ratio"]),
+        quickshift_kernel_size=int(slic_settings["quickshift_kernel_size"]),
+        quickshift_max_dist=float(slic_settings["quickshift_max_dist"]),
+        quickshift_sigma=float(slic_settings["quickshift_sigma"]),
+        felzenszwalb_scale=float(slic_settings["felzenszwalb_scale"]),
+        felzenszwalb_sigma=float(slic_settings["felzenszwalb_sigma"]),
+        felzenszwalb_min_size=int(slic_settings["felzenszwalb_min_size"]),
+        texture_enabled=bool(slic_settings["texture_enabled"]),
+        texture_mode=str(slic_settings["texture_mode"]),
+        texture_lbp_enabled=bool(slic_settings["texture_lbp_enabled"]),
+        texture_lbp_points=int(slic_settings["texture_lbp_points"]),
+        texture_lbp_radii=list(slic_settings["texture_lbp_radii"]),
+        texture_lbp_method=str(slic_settings["texture_lbp_method"]),
+        texture_lbp_normalize=bool(slic_settings["texture_lbp_normalize"]),
+        texture_gabor_enabled=bool(slic_settings["texture_gabor_enabled"]),
+        texture_gabor_frequencies=list(slic_settings["texture_gabor_frequencies"]),
+        texture_gabor_thetas=list(slic_settings["texture_gabor_thetas"]),
+        texture_gabor_bandwidth=float(slic_settings["texture_gabor_bandwidth"]),
+        texture_gabor_include_real=bool(slic_settings["texture_gabor_include_real"]),
+        texture_gabor_include_imag=bool(slic_settings["texture_gabor_include_imag"]),
+        texture_gabor_include_magnitude=bool(slic_settings["texture_gabor_include_magnitude"]),
+        texture_gabor_normalize=bool(slic_settings["texture_gabor_normalize"]),
+        texture_weight_color=float(slic_settings["texture_weight_color"]),
+        texture_weight_lbp=float(slic_settings["texture_weight_lbp"]),
+        texture_weight_gabor=float(slic_settings["texture_weight_gabor"]),
     )
     return send_file(boundary_path, mimetype="image/png")
 
@@ -842,6 +1585,7 @@ def _api_project_context(project: dict[str, Any], image_name: str, build_label_u
             "prev_image_url": prev_image_url,
             "next_image_url": next_image_url,
             "slic_current": _effective_slic_for_image(project, safe_name),
+            "mask_freeze_default": _resolve_recompute_freeze_masks(project, {}, [safe_name]),
         }
     )
 
@@ -999,9 +1743,16 @@ def _api_project_recompute_superpixels(project: dict[str, Any]):
     else:
         target_images = [image_name]
 
+    freeze_masks = _resolve_recompute_freeze_masks(project, payload, target_images)
+    frozen_mask_files = 0
+    if freeze_masks:
+        for name in target_images:
+            frozen_mask_files += _freeze_existing_masks_for_image(project, name)
+
     masks_to_remove: list[Path] = []
-    for name in target_images:
-        masks_to_remove.extend(_mask_files_for_image(project, name))
+    if not freeze_masks:
+        for name in target_images:
+            masks_to_remove.extend(_all_mask_files_for_image(project, name))
 
     if masks_to_remove and not force_overwrite:
         return jsonify(
@@ -1013,6 +1764,7 @@ def _api_project_recompute_superpixels(project: dict[str, Any]):
                 ),
                 "affected_images": len(target_images),
                 "saved_mask_files": len(masks_to_remove),
+                "freeze_masks": False,
             }
         )
 
@@ -1025,7 +1777,13 @@ def _api_project_recompute_superpixels(project: dict[str, Any]):
 
     storage = _storage()
     preset_mode = requested_slic["preset_mode"]
-    if preset_mode == "dataset_default":
+    project_default = _project_default_slic(project)
+    use_dataset_defaults = (
+        preset_mode == "dataset_default"
+        and str(requested_slic.get("algorithm", "")).strip().lower()
+        == str(project_default.get("algorithm", "")).strip().lower()
+    )
+    if use_dataset_defaults:
         storage.delete_image_slic_overrides_for_images(project_id, target_images)
     else:
         for name in target_images:
@@ -1039,6 +1797,31 @@ def _api_project_recompute_superpixels(project: dict[str, Any]):
                 compactness=requested_slic["compactness"],
                 sigma=requested_slic["sigma"],
                 colorspace=requested_slic["colorspace"],
+                quickshift_ratio=requested_slic["quickshift_ratio"],
+                quickshift_kernel_size=requested_slic["quickshift_kernel_size"],
+                quickshift_max_dist=requested_slic["quickshift_max_dist"],
+                quickshift_sigma=requested_slic["quickshift_sigma"],
+                felzenszwalb_scale=requested_slic["felzenszwalb_scale"],
+                felzenszwalb_sigma=requested_slic["felzenszwalb_sigma"],
+                felzenszwalb_min_size=requested_slic["felzenszwalb_min_size"],
+                texture_enabled=requested_slic["texture_enabled"],
+                texture_mode=requested_slic["texture_mode"],
+                texture_lbp_enabled=requested_slic["texture_lbp_enabled"],
+                texture_lbp_points=requested_slic["texture_lbp_points"],
+                texture_lbp_radii=requested_slic["texture_lbp_radii"],
+                texture_lbp_method=requested_slic["texture_lbp_method"],
+                texture_lbp_normalize=requested_slic["texture_lbp_normalize"],
+                texture_gabor_enabled=requested_slic["texture_gabor_enabled"],
+                texture_gabor_frequencies=requested_slic["texture_gabor_frequencies"],
+                texture_gabor_thetas=requested_slic["texture_gabor_thetas"],
+                texture_gabor_bandwidth=requested_slic["texture_gabor_bandwidth"],
+                texture_gabor_include_real=requested_slic["texture_gabor_include_real"],
+                texture_gabor_include_imag=requested_slic["texture_gabor_include_imag"],
+                texture_gabor_include_magnitude=requested_slic["texture_gabor_include_magnitude"],
+                texture_gabor_normalize=requested_slic["texture_gabor_normalize"],
+                texture_weight_color=requested_slic["texture_weight_color"],
+                texture_weight_lbp=requested_slic["texture_weight_lbp"],
+                texture_weight_gabor=requested_slic["texture_weight_gabor"],
             )
 
     recomputed = 0
@@ -1055,22 +1838,57 @@ def _api_project_recompute_superpixels(project: dict[str, Any]):
         load_or_create_slic_cache(
             img_path,
             cache_dir,
+            algorithm=str(effective["algorithm"]),
             n_segments=int(effective["n_segments"]),
             compactness=float(effective["compactness"]),
             sigma=float(effective["sigma"]),
             colorspace=str(effective["colorspace"]),
+            quickshift_ratio=float(effective["quickshift_ratio"]),
+            quickshift_kernel_size=int(effective["quickshift_kernel_size"]),
+            quickshift_max_dist=float(effective["quickshift_max_dist"]),
+            quickshift_sigma=float(effective["quickshift_sigma"]),
+            felzenszwalb_scale=float(effective["felzenszwalb_scale"]),
+            felzenszwalb_sigma=float(effective["felzenszwalb_sigma"]),
+            felzenszwalb_min_size=int(effective["felzenszwalb_min_size"]),
+            texture_enabled=bool(effective["texture_enabled"]),
+            texture_mode=str(effective["texture_mode"]),
+            texture_lbp_enabled=bool(effective["texture_lbp_enabled"]),
+            texture_lbp_points=int(effective["texture_lbp_points"]),
+            texture_lbp_radii=list(effective["texture_lbp_radii"]),
+            texture_lbp_method=str(effective["texture_lbp_method"]),
+            texture_lbp_normalize=bool(effective["texture_lbp_normalize"]),
+            texture_gabor_enabled=bool(effective["texture_gabor_enabled"]),
+            texture_gabor_frequencies=list(effective["texture_gabor_frequencies"]),
+            texture_gabor_thetas=list(effective["texture_gabor_thetas"]),
+            texture_gabor_bandwidth=float(effective["texture_gabor_bandwidth"]),
+            texture_gabor_include_real=bool(effective["texture_gabor_include_real"]),
+            texture_gabor_include_imag=bool(effective["texture_gabor_include_imag"]),
+            texture_gabor_include_magnitude=bool(effective["texture_gabor_include_magnitude"]),
+            texture_gabor_normalize=bool(effective["texture_gabor_normalize"]),
+            texture_weight_color=float(effective["texture_weight_color"]),
+            texture_weight_lbp=float(effective["texture_weight_lbp"]),
+            texture_weight_gabor=float(effective["texture_weight_gabor"]),
         )
         recomputed += 1
 
     current_effective = _effective_slic_for_image(project, image_name)
-    if removed_mask_files > 0:
+    if removed_mask_files > 0 or frozen_mask_files > 0:
         storage.bump_labeler_project_version(project_id)
+    if freeze_masks and frozen_mask_files > 0:
+        message = (
+            f"Recomputed superpixels for {recomputed} image(s). "
+            f"Preserved {frozen_mask_files} class mask(s) as frozen seed masks."
+        )
+    else:
+        message = f"Recomputed superpixels for {recomputed} image(s)."
     return jsonify(
         {
-            "message": f"Recomputed superpixels for {recomputed} image(s).",
+            "message": message,
             "recomputed_images": recomputed,
             "removed_mask_files": removed_mask_files,
             "saved_mask_files": len(masks_to_remove),
+            "frozen_mask_files": frozen_mask_files,
+            "freeze_masks": freeze_masks,
             "current_slic": current_effective,
             "requires_confirmation": False,
         }
@@ -1379,6 +2197,77 @@ def upload_images(workspace_id: int) -> str:
     return redirect(url_for("labeler.workspace_images", workspace_id=workspace_id))
 
 
+@bp.route("/workspace/<int:workspace_id>/images/delete", methods=["POST"])
+def delete_workspace_image(workspace_id: int) -> str:
+    workspace = _get_workspace_or_404(workspace_id)
+    image_name = safe_image_name(request.form.get("image_name", ""))
+    if not image_name:
+        flash("Select a valid image to delete.", "error")
+        return redirect(url_for("labeler.workspace_images", workspace_id=workspace_id))
+
+    images_dir = _project_images_dir(workspace)
+    candidate = (images_dir / image_name).resolve()
+    try:
+        candidate.relative_to(images_dir)
+    except ValueError:
+        flash("Invalid image path.", "error")
+        return redirect(url_for("labeler.workspace_images", workspace_id=workspace_id))
+
+    if not candidate.exists() or not candidate.is_file():
+        flash(f"Image '{image_name}' is not available in this workspace.", "warning")
+        return redirect(url_for("labeler.workspace_images", workspace_id=workspace_id))
+
+    references = _analysis_image_references(workspace_id, candidate)
+    active_job_ids = references["active_job_ids"]
+    active_run_ids = references["active_run_ids"]
+    completed_run_ids = references["completed_run_ids"]
+    if active_job_ids or active_run_ids:
+        parts: list[str] = []
+        if active_job_ids:
+            preview = ", ".join(f"#{job_id}" for job_id in active_job_ids[:5])
+            if len(active_job_ids) > 5:
+                preview += ", ..."
+            parts.append(f"analysis job(s) {preview}")
+        if active_run_ids:
+            preview = ", ".join(f"#{run_id}" for run_id in active_run_ids[:5])
+            if len(active_run_ids) > 5:
+                preview += ", ..."
+            parts.append(f"analysis run(s) {preview}")
+        details = " and ".join(parts) if parts else "active analysis references"
+        flash(
+            f"Cannot delete '{image_name}' while it is referenced by {details}.",
+            "error",
+        )
+        return redirect(url_for("labeler.workspace_images", workspace_id=workspace_id))
+
+    try:
+        candidate.unlink()
+    except OSError as exc:
+        flash(f"Failed to delete '{image_name}': {exc}", "error")
+        return redirect(url_for("labeler.workspace_images", workspace_id=workspace_id))
+
+    _storage().touch_labeler_project(workspace_id)
+    if completed_run_ids:
+        preview = ", ".join(f"#{run_id}" for run_id in completed_run_ids[:5])
+        if len(completed_run_ids) > 5:
+            preview += ", ..."
+        flash(
+            (
+                f"Deleted '{image_name}'. Completed analysis run(s) {preview} referenced this path; "
+                "future promotions from those runs may skip this item."
+            ),
+            "warning",
+        )
+    else:
+        flash(f"Deleted '{image_name}' from workspace images.", "success")
+
+    flash(
+        "Any draft datasets that already included this image keep their own copied files.",
+        "warning",
+    )
+    return redirect(url_for("labeler.workspace_images", workspace_id=workspace_id))
+
+
 @bp.route("/labeler/projects/<int:project_id>/classes", methods=["POST"])
 def update_project_classes(project_id: int) -> str:
     storage = _storage()
@@ -1438,6 +2327,10 @@ def update_project_classes(project_id: int) -> str:
             except (TypeError, ValueError):
                 continue
             for mask_path in masks_dir.glob(f"*__cid_{class_id}.png"):
+                if mask_path.exists() and mask_path.is_file():
+                    mask_path.unlink()
+                    removed_mask_files += 1
+            for mask_path in masks_dir.glob(f"*__cid_{class_id}__frozen.png"):
                 if mask_path.exists() and mask_path.is_file():
                     mask_path.unlink()
                     removed_mask_files += 1

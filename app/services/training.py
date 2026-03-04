@@ -173,12 +173,14 @@ def train_model(
     val_y_parts: list[np.ndarray] = []
 
     val_limit_per_class = max(500, train_config.max_samples_per_class // 3)
+    total_images = len(images)
 
-    for image_info in images:
+    for image_index, image_info in enumerate(images, start=1):
         image_id = int(image_info["id"])
         subset = "val" if image_id in val_ids else "train"
         file_name = str(image_info["file_name"])
         image_path = resolve_image_path(dataset_path, image_root, file_name)
+        _log(log_fn, f"Sampling image {image_index}/{total_images} ({subset}): {file_name}")
         if not image_path.exists():
             warnings.append(f"Image not found and skipped: {image_path}")
             continue

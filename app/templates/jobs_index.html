@@ -78,6 +78,7 @@
                   <progress max="100" value="{{ job.progress_percent }}"></progress>
                   <span>{{ "%.0f"|format(job.progress_percent) }}%</span>
                 </div>
+                <div class="job-progress-detail muted" data-progress-counter>{{ job.progress_counter_label or "" }}</div>
               </td>
               <td class="job-last-log">{{ job.last_log or "-" }}</td>
               <td>

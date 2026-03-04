@@ -769,6 +769,16 @@ th.is-sorted-desc::after {
   background: #e5ebf3;
 }
 
+.table-action-btn.danger {
+  border-color: #f0afbf;
+  background: #ffe9ee;
+  color: #8f1a3c;
+}
+
+.table-action-btn.danger:hover {
+  background: #ffdbe5;
+}
+
 .table-action-icon {
   font-size: 12px;
   line-height: 1;
@@ -1178,6 +1188,44 @@ th.is-sorted-desc::after {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+
+.analysis-image-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  border: 1px solid #d8e2ef;
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 8px 10px;
+}
+
+.analysis-image-pagination-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.analysis-image-pagination-status {
+  font-size: 12px;
+  color: #334155;
+}
+
+.analysis-image-pagination-size {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #334155;
+}
+
+.analysis-image-pagination-size select {
+  width: auto;
+  min-width: 72px;
 }
 
 .analysis-selection-count {
@@ -2020,6 +2068,61 @@ button.link-btn:hover {
     align-items: stretch;
   }
 
+  .analysis-image-pagination {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .analysis-image-pagination-main {
+    justify-content: space-between;
+  }
+
+  .analysis-image-pagination-size {
+    justify-content: space-between;
+  }
+
+  .dataset-selection-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .dataset-selection-actions {
+    justify-content: flex-start;
+  }
+
+  .dataset-selection-pagination {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dataset-selection-pagination-main {
+    justify-content: space-between;
+  }
+
+  .dataset-selection-pagination-size {
+    justify-content: space-between;
+  }
+
+  .recipe-image-picker-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .recipe-image-picker-actions {
+    justify-content: flex-start;
+  }
+
+  .recipe-image-picker-pagination {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .recipe-image-picker-pagination-main {
+    justify-content: space-between;
+  }
+
+  .recipe-image-picker-pagination-size {
+    justify-content: space-between;
+  }
+
   .analysis-review-grid {
     grid-template-columns: 1fr;
   }
@@ -2255,6 +2358,100 @@ button.link-btn:hover {
   font-size: 12px;
 }
 
+.recipe-image-picker {
+  border: 1px solid #dbe5f2;
+  border-radius: 7px;
+  background: #fbfdff;
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.recipe-image-picker-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.recipe-image-picker-search {
+  margin: 0;
+}
+
+.recipe-image-picker-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.recipe-image-picker-status {
+  font-size: 12px;
+  color: #334155;
+}
+
+.recipe-image-picker-list {
+  border: 1px solid #d7e2ef;
+  border-radius: 6px;
+  background: #fff;
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.recipe-image-picker-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  color: #334155;
+}
+
+.recipe-image-picker-item code {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recipe-image-picker-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.recipe-image-picker-pagination-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.recipe-image-picker-pagination-status {
+  font-size: 12px;
+  color: #334155;
+}
+
+.recipe-image-picker-pagination-size {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #334155;
+}
+
+.recipe-image-picker-pagination-size select {
+  width: auto;
+  min-width: 72px;
+}
+
 .collection-upload-form {
   margin-top: 8px;
   display: grid;
@@ -2322,6 +2519,76 @@ button.link-btn:hover {
 }
 
 .dataset-selection-head h3 {
+  margin: 0;
+}
+
+.dataset-selection-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.6fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.dataset-selection-search {
+  margin: 0;
+}
+
+.dataset-selection-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dataset-selection-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  border: 1px solid #d8e2ef;
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 8px 10px;
+}
+
+.dataset-selection-pagination-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dataset-selection-pagination-status {
+  font-size: 12px;
+  color: #334155;
+}
+
+.dataset-selection-pagination-size {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #334155;
+}
+
+.dataset-selection-pagination-size select {
+  width: auto;
+  min-width: 72px;
+}
+
+.dataset-selection-grid {
+  border: 1px solid #d8e2ef;
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 8px;
+  max-height: 460px;
+  overflow: auto;
+}
+
+.dataset-selection-empty {
   margin: 0;
 }
 
@@ -4093,6 +4360,16 @@ body.modal-open {
 .job-progress-wrap progress {
   width: 72px;
   height: 8px;
+}
+
+.job-progress-detail {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.job-progress-detail:empty {
+  display: none;
 }
 
 .job-last-log {

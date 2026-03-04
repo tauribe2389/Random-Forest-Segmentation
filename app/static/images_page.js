@@ -518,6 +518,25 @@
   var chunkSize = 60;
   var visibleLimit = chunkSize;
 
+  asArray(doc.querySelectorAll("[data-delete-image-form]")).forEach(function (form) {
+    form.addEventListener("submit", function (event) {
+      var target = event.currentTarget;
+      if (!target) {
+        return;
+      }
+      var hiddenInput = target.querySelector("input[name='image_name']");
+      var imageName = hiddenInput ? String(hiddenInput.value || "").trim() : "";
+      var label = imageName || "this image";
+      var message =
+        "Delete " + label + " from this workspace?\n\n" +
+        "This removes only the workspace copy. Existing draft datasets keep their copied files.\n" +
+        "Deletion is blocked when active analysis jobs/runs still reference the image.";
+      if (!window.confirm(message)) {
+        event.preventDefault();
+      }
+    });
+  });
+
   function wireInspectTriggers(card) {
     asArray(card.querySelectorAll("[data-inspect-image]")).forEach(function (trigger) {
       trigger.addEventListener("click", function (event) {

@@ -181,6 +181,31 @@ class Storage:
             slic_compactness REAL NOT NULL DEFAULT 10.0,
             slic_sigma REAL NOT NULL DEFAULT 1.0,
             slic_colorspace TEXT NOT NULL DEFAULT 'lab',
+            quickshift_ratio REAL NOT NULL DEFAULT 1.0,
+            quickshift_kernel_size INTEGER NOT NULL DEFAULT 5,
+            quickshift_max_dist REAL NOT NULL DEFAULT 10.0,
+            quickshift_sigma REAL NOT NULL DEFAULT 0.0,
+            felzenszwalb_scale REAL NOT NULL DEFAULT 100.0,
+            felzenszwalb_sigma REAL NOT NULL DEFAULT 0.8,
+            felzenszwalb_min_size INTEGER NOT NULL DEFAULT 50,
+            texture_enabled INTEGER NOT NULL DEFAULT 0,
+            texture_mode TEXT NOT NULL DEFAULT 'append_to_color',
+            texture_lbp_enabled INTEGER NOT NULL DEFAULT 0,
+            texture_lbp_points INTEGER NOT NULL DEFAULT 8,
+            texture_lbp_radii_json TEXT NOT NULL DEFAULT '[1]',
+            texture_lbp_method TEXT NOT NULL DEFAULT 'uniform',
+            texture_lbp_normalize INTEGER NOT NULL DEFAULT 1,
+            texture_gabor_enabled INTEGER NOT NULL DEFAULT 0,
+            texture_gabor_frequencies_json TEXT NOT NULL DEFAULT '[0.1, 0.2]',
+            texture_gabor_thetas_json TEXT NOT NULL DEFAULT '[0.0, 45.0, 90.0, 135.0]',
+            texture_gabor_bandwidth REAL NOT NULL DEFAULT 1.0,
+            texture_gabor_include_real INTEGER NOT NULL DEFAULT 0,
+            texture_gabor_include_imag INTEGER NOT NULL DEFAULT 0,
+            texture_gabor_include_magnitude INTEGER NOT NULL DEFAULT 1,
+            texture_gabor_normalize INTEGER NOT NULL DEFAULT 1,
+            texture_weight_color REAL NOT NULL DEFAULT 1.0,
+            texture_weight_lbp REAL NOT NULL DEFAULT 0.25,
+            texture_weight_gabor REAL NOT NULL DEFAULT 0.25,
             categories_json TEXT NOT NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
@@ -197,6 +222,31 @@ class Storage:
             compactness REAL NOT NULL,
             sigma REAL NOT NULL,
             colorspace TEXT NOT NULL DEFAULT 'lab',
+            quickshift_ratio REAL NOT NULL DEFAULT 1.0,
+            quickshift_kernel_size INTEGER NOT NULL DEFAULT 5,
+            quickshift_max_dist REAL NOT NULL DEFAULT 10.0,
+            quickshift_sigma REAL NOT NULL DEFAULT 0.0,
+            felzenszwalb_scale REAL NOT NULL DEFAULT 100.0,
+            felzenszwalb_sigma REAL NOT NULL DEFAULT 0.8,
+            felzenszwalb_min_size INTEGER NOT NULL DEFAULT 50,
+            texture_enabled INTEGER NOT NULL DEFAULT 0,
+            texture_mode TEXT NOT NULL DEFAULT 'append_to_color',
+            texture_lbp_enabled INTEGER NOT NULL DEFAULT 0,
+            texture_lbp_points INTEGER NOT NULL DEFAULT 8,
+            texture_lbp_radii_json TEXT NOT NULL DEFAULT '[1]',
+            texture_lbp_method TEXT NOT NULL DEFAULT 'uniform',
+            texture_lbp_normalize INTEGER NOT NULL DEFAULT 1,
+            texture_gabor_enabled INTEGER NOT NULL DEFAULT 0,
+            texture_gabor_frequencies_json TEXT NOT NULL DEFAULT '[0.1, 0.2]',
+            texture_gabor_thetas_json TEXT NOT NULL DEFAULT '[0.0, 45.0, 90.0, 135.0]',
+            texture_gabor_bandwidth REAL NOT NULL DEFAULT 1.0,
+            texture_gabor_include_real INTEGER NOT NULL DEFAULT 0,
+            texture_gabor_include_imag INTEGER NOT NULL DEFAULT 0,
+            texture_gabor_include_magnitude INTEGER NOT NULL DEFAULT 1,
+            texture_gabor_normalize INTEGER NOT NULL DEFAULT 1,
+            texture_weight_color REAL NOT NULL DEFAULT 1.0,
+            texture_weight_lbp REAL NOT NULL DEFAULT 0.25,
+            texture_weight_gabor REAL NOT NULL DEFAULT 0.25,
             updated_at TEXT NOT NULL,
             PRIMARY KEY (project_id, image_name),
             FOREIGN KEY (project_id) REFERENCES labeler_projects(id) ON DELETE CASCADE
@@ -422,6 +472,306 @@ class Storage:
             )
             self._ensure_column(
                 conn,
+                table_name="labeler_projects",
+                column_name="quickshift_ratio",
+                definition="REAL NOT NULL DEFAULT 1.0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="quickshift_kernel_size",
+                definition="INTEGER NOT NULL DEFAULT 5",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="quickshift_max_dist",
+                definition="REAL NOT NULL DEFAULT 10.0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="quickshift_sigma",
+                definition="REAL NOT NULL DEFAULT 0.0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="felzenszwalb_scale",
+                definition="REAL NOT NULL DEFAULT 100.0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="felzenszwalb_sigma",
+                definition="REAL NOT NULL DEFAULT 0.8",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="felzenszwalb_min_size",
+                definition="INTEGER NOT NULL DEFAULT 50",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_enabled",
+                definition="INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_mode",
+                definition="TEXT NOT NULL DEFAULT 'append_to_color'",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_lbp_enabled",
+                definition="INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_lbp_points",
+                definition="INTEGER NOT NULL DEFAULT 8",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_lbp_radii_json",
+                definition="TEXT NOT NULL DEFAULT '[1]'",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_lbp_method",
+                definition="TEXT NOT NULL DEFAULT 'uniform'",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_lbp_normalize",
+                definition="INTEGER NOT NULL DEFAULT 1",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_gabor_enabled",
+                definition="INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_gabor_frequencies_json",
+                definition="TEXT NOT NULL DEFAULT '[0.1, 0.2]'",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_gabor_thetas_json",
+                definition="TEXT NOT NULL DEFAULT '[0.0, 45.0, 90.0, 135.0]'",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_gabor_bandwidth",
+                definition="REAL NOT NULL DEFAULT 1.0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_gabor_include_real",
+                definition="INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_gabor_include_imag",
+                definition="INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_gabor_include_magnitude",
+                definition="INTEGER NOT NULL DEFAULT 1",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_gabor_normalize",
+                definition="INTEGER NOT NULL DEFAULT 1",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_weight_color",
+                definition="REAL NOT NULL DEFAULT 1.0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_weight_lbp",
+                definition="REAL NOT NULL DEFAULT 0.25",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_projects",
+                column_name="texture_weight_gabor",
+                definition="REAL NOT NULL DEFAULT 0.25",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="quickshift_ratio",
+                definition="REAL NOT NULL DEFAULT 1.0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="quickshift_kernel_size",
+                definition="INTEGER NOT NULL DEFAULT 5",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="quickshift_max_dist",
+                definition="REAL NOT NULL DEFAULT 10.0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="quickshift_sigma",
+                definition="REAL NOT NULL DEFAULT 0.0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="felzenszwalb_scale",
+                definition="REAL NOT NULL DEFAULT 100.0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="felzenszwalb_sigma",
+                definition="REAL NOT NULL DEFAULT 0.8",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="felzenszwalb_min_size",
+                definition="INTEGER NOT NULL DEFAULT 50",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_enabled",
+                definition="INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_mode",
+                definition="TEXT NOT NULL DEFAULT 'append_to_color'",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_lbp_enabled",
+                definition="INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_lbp_points",
+                definition="INTEGER NOT NULL DEFAULT 8",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_lbp_radii_json",
+                definition="TEXT NOT NULL DEFAULT '[1]'",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_lbp_method",
+                definition="TEXT NOT NULL DEFAULT 'uniform'",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_lbp_normalize",
+                definition="INTEGER NOT NULL DEFAULT 1",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_gabor_enabled",
+                definition="INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_gabor_frequencies_json",
+                definition="TEXT NOT NULL DEFAULT '[0.1, 0.2]'",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_gabor_thetas_json",
+                definition="TEXT NOT NULL DEFAULT '[0.0, 45.0, 90.0, 135.0]'",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_gabor_bandwidth",
+                definition="REAL NOT NULL DEFAULT 1.0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_gabor_include_real",
+                definition="INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_gabor_include_imag",
+                definition="INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_gabor_include_magnitude",
+                definition="INTEGER NOT NULL DEFAULT 1",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_gabor_normalize",
+                definition="INTEGER NOT NULL DEFAULT 1",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_weight_color",
+                definition="REAL NOT NULL DEFAULT 1.0",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_weight_lbp",
+                definition="REAL NOT NULL DEFAULT 0.25",
+            )
+            self._ensure_column(
+                conn,
+                table_name="labeler_image_slic_overrides",
+                column_name="texture_weight_gabor",
+                definition="REAL NOT NULL DEFAULT 0.25",
+            )
+            self._ensure_column(
+                conn,
                 table_name="jobs",
                 column_name="workspace_id",
                 definition="INTEGER NOT NULL DEFAULT 0",
@@ -596,6 +946,193 @@ class Storage:
             )
             conn.execute(
                 "UPDATE labeler_projects SET slic_colorspace = 'lab' WHERE slic_colorspace IS NULL OR slic_colorspace = ''"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET quickshift_ratio = 1.0 WHERE quickshift_ratio IS NULL OR quickshift_ratio <= 0"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET quickshift_kernel_size = 5 "
+                "WHERE quickshift_kernel_size IS NULL OR quickshift_kernel_size <= 0"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET quickshift_max_dist = 10.0 "
+                "WHERE quickshift_max_dist IS NULL OR quickshift_max_dist <= 0"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET quickshift_sigma = 0.0 WHERE quickshift_sigma IS NULL OR quickshift_sigma < 0"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET felzenszwalb_scale = 100.0 "
+                "WHERE felzenszwalb_scale IS NULL OR felzenszwalb_scale <= 0"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET felzenszwalb_sigma = 0.8 "
+                "WHERE felzenszwalb_sigma IS NULL OR felzenszwalb_sigma < 0"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET felzenszwalb_min_size = 50 "
+                "WHERE felzenszwalb_min_size IS NULL OR felzenszwalb_min_size <= 1"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_enabled = 0 WHERE texture_enabled IS NULL"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_mode = 'append_to_color' "
+                "WHERE texture_mode IS NULL OR texture_mode = ''"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_lbp_enabled = 0 WHERE texture_lbp_enabled IS NULL"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_lbp_points = 8 "
+                "WHERE texture_lbp_points IS NULL OR texture_lbp_points < 1"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_lbp_radii_json = '[1]' "
+                "WHERE texture_lbp_radii_json IS NULL OR texture_lbp_radii_json = ''"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_lbp_method = 'uniform' "
+                "WHERE texture_lbp_method IS NULL OR texture_lbp_method = ''"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_lbp_normalize = 1 WHERE texture_lbp_normalize IS NULL"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_gabor_enabled = 0 WHERE texture_gabor_enabled IS NULL"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_gabor_frequencies_json = '[0.1, 0.2]' "
+                "WHERE texture_gabor_frequencies_json IS NULL OR texture_gabor_frequencies_json = ''"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_gabor_thetas_json = '[0.0, 45.0, 90.0, 135.0]' "
+                "WHERE texture_gabor_thetas_json IS NULL OR texture_gabor_thetas_json = ''"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_gabor_bandwidth = 1.0 "
+                "WHERE texture_gabor_bandwidth IS NULL OR texture_gabor_bandwidth <= 0"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_gabor_include_real = 0 WHERE texture_gabor_include_real IS NULL"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_gabor_include_imag = 0 WHERE texture_gabor_include_imag IS NULL"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_gabor_include_magnitude = 1 "
+                "WHERE texture_gabor_include_magnitude IS NULL"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_gabor_normalize = 1 WHERE texture_gabor_normalize IS NULL"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_weight_color = 1.0 "
+                "WHERE texture_weight_color IS NULL OR texture_weight_color <= 0"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_weight_lbp = 0.25 WHERE texture_weight_lbp IS NULL OR texture_weight_lbp < 0"
+            )
+            conn.execute(
+                "UPDATE labeler_projects SET texture_weight_gabor = 0.25 "
+                "WHERE texture_weight_gabor IS NULL OR texture_weight_gabor < 0"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET quickshift_ratio = 1.0 "
+                "WHERE quickshift_ratio IS NULL OR quickshift_ratio <= 0"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET quickshift_kernel_size = 5 "
+                "WHERE quickshift_kernel_size IS NULL OR quickshift_kernel_size <= 0"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET quickshift_max_dist = 10.0 "
+                "WHERE quickshift_max_dist IS NULL OR quickshift_max_dist <= 0"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET quickshift_sigma = 0.0 "
+                "WHERE quickshift_sigma IS NULL OR quickshift_sigma < 0"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET felzenszwalb_scale = 100.0 "
+                "WHERE felzenszwalb_scale IS NULL OR felzenszwalb_scale <= 0"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET felzenszwalb_sigma = 0.8 "
+                "WHERE felzenszwalb_sigma IS NULL OR felzenszwalb_sigma < 0"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET felzenszwalb_min_size = 50 "
+                "WHERE felzenszwalb_min_size IS NULL OR felzenszwalb_min_size <= 1"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_enabled = 0 WHERE texture_enabled IS NULL"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_mode = 'append_to_color' "
+                "WHERE texture_mode IS NULL OR texture_mode = ''"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_lbp_enabled = 0 WHERE texture_lbp_enabled IS NULL"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_lbp_points = 8 "
+                "WHERE texture_lbp_points IS NULL OR texture_lbp_points < 1"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_lbp_radii_json = '[1]' "
+                "WHERE texture_lbp_radii_json IS NULL OR texture_lbp_radii_json = ''"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_lbp_method = 'uniform' "
+                "WHERE texture_lbp_method IS NULL OR texture_lbp_method = ''"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_lbp_normalize = 1 "
+                "WHERE texture_lbp_normalize IS NULL"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_gabor_enabled = 0 WHERE texture_gabor_enabled IS NULL"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_gabor_frequencies_json = '[0.1, 0.2]' "
+                "WHERE texture_gabor_frequencies_json IS NULL OR texture_gabor_frequencies_json = ''"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_gabor_thetas_json = '[0.0, 45.0, 90.0, 135.0]' "
+                "WHERE texture_gabor_thetas_json IS NULL OR texture_gabor_thetas_json = ''"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_gabor_bandwidth = 1.0 "
+                "WHERE texture_gabor_bandwidth IS NULL OR texture_gabor_bandwidth <= 0"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_gabor_include_real = 0 "
+                "WHERE texture_gabor_include_real IS NULL"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_gabor_include_imag = 0 "
+                "WHERE texture_gabor_include_imag IS NULL"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_gabor_include_magnitude = 1 "
+                "WHERE texture_gabor_include_magnitude IS NULL"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_gabor_normalize = 1 "
+                "WHERE texture_gabor_normalize IS NULL"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_weight_color = 1.0 "
+                "WHERE texture_weight_color IS NULL OR texture_weight_color <= 0"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_weight_lbp = 0.25 "
+                "WHERE texture_weight_lbp IS NULL OR texture_weight_lbp < 0"
+            )
+            conn.execute(
+                "UPDATE labeler_image_slic_overrides SET texture_weight_gabor = 0.25 "
+                "WHERE texture_weight_gabor IS NULL OR texture_weight_gabor < 0"
             )
             row = conn.execute("SELECT id FROM labeler_projects ORDER BY id ASC LIMIT 1").fetchone()
             if row is not None:
@@ -1737,6 +2274,31 @@ class Storage:
         slic_compactness: float = 10.0,
         slic_sigma: float = 1.0,
         slic_colorspace: str = "lab",
+        quickshift_ratio: float = 1.0,
+        quickshift_kernel_size: int = 5,
+        quickshift_max_dist: float = 10.0,
+        quickshift_sigma: float = 0.0,
+        felzenszwalb_scale: float = 100.0,
+        felzenszwalb_sigma: float = 0.8,
+        felzenszwalb_min_size: int = 50,
+        texture_enabled: bool = False,
+        texture_mode: str = "append_to_color",
+        texture_lbp_enabled: bool = False,
+        texture_lbp_points: int = 8,
+        texture_lbp_radii: list[int] | tuple[int, ...] = (1,),
+        texture_lbp_method: str = "uniform",
+        texture_lbp_normalize: bool = True,
+        texture_gabor_enabled: bool = False,
+        texture_gabor_frequencies: list[float] | tuple[float, ...] = (0.1, 0.2),
+        texture_gabor_thetas: list[float] | tuple[float, ...] = (0.0, 45.0, 90.0, 135.0),
+        texture_gabor_bandwidth: float = 1.0,
+        texture_gabor_include_real: bool = False,
+        texture_gabor_include_imag: bool = False,
+        texture_gabor_include_magnitude: bool = True,
+        texture_gabor_normalize: bool = True,
+        texture_weight_color: float = 1.0,
+        texture_weight_lbp: float = 0.25,
+        texture_weight_gabor: float = 0.25,
     ) -> int:
         now = _utc_now_iso()
         normalized_kind = str(kind or "workspace").strip().lower()
@@ -1752,6 +2314,21 @@ class Storage:
             origin_draft_project_id = None
             origin_draft_version = None
             origin_registered_dataset_id = None
+        normalized_texture_mode = str(texture_mode or "append_to_color").strip().lower() or "append_to_color"
+        if normalized_texture_mode not in {"append_to_color"}:
+            normalized_texture_mode = "append_to_color"
+        normalized_texture_lbp_method = str(texture_lbp_method or "uniform").strip().lower() or "uniform"
+        if normalized_texture_lbp_method not in {"uniform", "ror", "default"}:
+            normalized_texture_lbp_method = "uniform"
+        normalized_texture_lbp_radii = [int(value) for value in texture_lbp_radii if int(value) > 0]
+        if not normalized_texture_lbp_radii:
+            normalized_texture_lbp_radii = [1]
+        normalized_texture_gabor_frequencies = [float(value) for value in texture_gabor_frequencies if float(value) > 0]
+        if not normalized_texture_gabor_frequencies:
+            normalized_texture_gabor_frequencies = [0.1, 0.2]
+        normalized_texture_gabor_thetas = [float(value) for value in texture_gabor_thetas]
+        if not normalized_texture_gabor_thetas:
+            normalized_texture_gabor_thetas = [0.0, 45.0, 90.0, 135.0]
         normalized_categories = self._normalize_labeler_categories_payload(categories)
         normalized_seed: int | None = None
         if augmentation_seed is not None:
@@ -1779,6 +2356,31 @@ class Storage:
             max(0.01, float(slic_compactness)),
             max(0.0, float(slic_sigma)),
             str(slic_colorspace or "lab").strip().lower() or "lab",
+            max(0.01, float(quickshift_ratio)),
+            max(1, int(quickshift_kernel_size)),
+            max(0.01, float(quickshift_max_dist)),
+            max(0.0, float(quickshift_sigma)),
+            max(0.01, float(felzenszwalb_scale)),
+            max(0.0, float(felzenszwalb_sigma)),
+            max(2, int(felzenszwalb_min_size)),
+            1 if bool(texture_enabled) else 0,
+            normalized_texture_mode,
+            1 if bool(texture_lbp_enabled) else 0,
+            max(1, int(texture_lbp_points)),
+            json.dumps(normalized_texture_lbp_radii),
+            normalized_texture_lbp_method,
+            1 if bool(texture_lbp_normalize) else 0,
+            1 if bool(texture_gabor_enabled) else 0,
+            json.dumps(normalized_texture_gabor_frequencies),
+            json.dumps(normalized_texture_gabor_thetas),
+            max(0.01, float(texture_gabor_bandwidth)),
+            1 if bool(texture_gabor_include_real) else 0,
+            1 if bool(texture_gabor_include_imag) else 0,
+            1 if bool(texture_gabor_include_magnitude) else 0,
+            1 if bool(texture_gabor_normalize) else 0,
+            max(0.01, float(texture_weight_color)),
+            max(0.0, float(texture_weight_lbp)),
+            max(0.0, float(texture_weight_gabor)),
             json.dumps(normalized_categories),
             now,
             now,
@@ -1788,9 +2390,22 @@ class Storage:
             name, dataset_id, kind, parent_workspace_id, augmentation_seed, draft_version, origin_type, origin_draft_project_id,
             origin_draft_version, origin_registered_dataset_id, project_dir, images_dir, masks_dir, coco_dir, cache_dir,
             slic_algorithm, slic_preset_name, slic_detail_level, slic_n_segments, slic_compactness, slic_sigma, slic_colorspace,
+            quickshift_ratio, quickshift_kernel_size, quickshift_max_dist, quickshift_sigma,
+            felzenszwalb_scale, felzenszwalb_sigma, felzenszwalb_min_size,
+            texture_enabled, texture_mode,
+            texture_lbp_enabled, texture_lbp_points, texture_lbp_radii_json, texture_lbp_method, texture_lbp_normalize,
+            texture_gabor_enabled, texture_gabor_frequencies_json, texture_gabor_thetas_json, texture_gabor_bandwidth,
+            texture_gabor_include_real, texture_gabor_include_imag, texture_gabor_include_magnitude, texture_gabor_normalize,
+            texture_weight_color, texture_weight_lbp, texture_weight_gabor,
             categories_json, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
         """
         with self._connect() as conn:
             cursor = conn.execute(sql, payload)
@@ -1874,6 +2489,31 @@ class Storage:
         slic_compactness: float = 10.0,
         slic_sigma: float = 1.0,
         slic_colorspace: str = "lab",
+        quickshift_ratio: float = 1.0,
+        quickshift_kernel_size: int = 5,
+        quickshift_max_dist: float = 10.0,
+        quickshift_sigma: float = 0.0,
+        felzenszwalb_scale: float = 100.0,
+        felzenszwalb_sigma: float = 0.8,
+        felzenszwalb_min_size: int = 50,
+        texture_enabled: bool = False,
+        texture_mode: str = "append_to_color",
+        texture_lbp_enabled: bool = False,
+        texture_lbp_points: int = 8,
+        texture_lbp_radii: list[int] | tuple[int, ...] = (1,),
+        texture_lbp_method: str = "uniform",
+        texture_lbp_normalize: bool = True,
+        texture_gabor_enabled: bool = False,
+        texture_gabor_frequencies: list[float] | tuple[float, ...] = (0.1, 0.2),
+        texture_gabor_thetas: list[float] | tuple[float, ...] = (0.0, 45.0, 90.0, 135.0),
+        texture_gabor_bandwidth: float = 1.0,
+        texture_gabor_include_real: bool = False,
+        texture_gabor_include_imag: bool = False,
+        texture_gabor_include_magnitude: bool = True,
+        texture_gabor_normalize: bool = True,
+        texture_weight_color: float = 1.0,
+        texture_weight_lbp: float = 0.25,
+        texture_weight_gabor: float = 0.25,
         draft_version: int = 1,
         origin_type: str = "manual",
         origin_draft_project_id: int | None = None,
@@ -1903,6 +2543,31 @@ class Storage:
             slic_compactness=slic_compactness,
             slic_sigma=slic_sigma,
             slic_colorspace=slic_colorspace,
+            quickshift_ratio=quickshift_ratio,
+            quickshift_kernel_size=quickshift_kernel_size,
+            quickshift_max_dist=quickshift_max_dist,
+            quickshift_sigma=quickshift_sigma,
+            felzenszwalb_scale=felzenszwalb_scale,
+            felzenszwalb_sigma=felzenszwalb_sigma,
+            felzenszwalb_min_size=felzenszwalb_min_size,
+            texture_enabled=texture_enabled,
+            texture_mode=texture_mode,
+            texture_lbp_enabled=texture_lbp_enabled,
+            texture_lbp_points=texture_lbp_points,
+            texture_lbp_radii=texture_lbp_radii,
+            texture_lbp_method=texture_lbp_method,
+            texture_lbp_normalize=texture_lbp_normalize,
+            texture_gabor_enabled=texture_gabor_enabled,
+            texture_gabor_frequencies=texture_gabor_frequencies,
+            texture_gabor_thetas=texture_gabor_thetas,
+            texture_gabor_bandwidth=texture_gabor_bandwidth,
+            texture_gabor_include_real=texture_gabor_include_real,
+            texture_gabor_include_imag=texture_gabor_include_imag,
+            texture_gabor_include_magnitude=texture_gabor_include_magnitude,
+            texture_gabor_normalize=texture_gabor_normalize,
+            texture_weight_color=texture_weight_color,
+            texture_weight_lbp=texture_weight_lbp,
+            texture_weight_gabor=texture_weight_gabor,
         )
 
     def list_workspace_datasets(self, workspace_id: int) -> list[dict[str, Any]]:
@@ -1952,7 +2617,47 @@ class Storage:
         compactness: float,
         sigma: float,
         colorspace: str,
+        quickshift_ratio: float,
+        quickshift_kernel_size: int,
+        quickshift_max_dist: float,
+        quickshift_sigma: float,
+        felzenszwalb_scale: float,
+        felzenszwalb_sigma: float,
+        felzenszwalb_min_size: int,
+        texture_enabled: bool,
+        texture_mode: str,
+        texture_lbp_enabled: bool,
+        texture_lbp_points: int,
+        texture_lbp_radii: list[int] | tuple[int, ...],
+        texture_lbp_method: str,
+        texture_lbp_normalize: bool,
+        texture_gabor_enabled: bool,
+        texture_gabor_frequencies: list[float] | tuple[float, ...],
+        texture_gabor_thetas: list[float] | tuple[float, ...],
+        texture_gabor_bandwidth: float,
+        texture_gabor_include_real: bool,
+        texture_gabor_include_imag: bool,
+        texture_gabor_include_magnitude: bool,
+        texture_gabor_normalize: bool,
+        texture_weight_color: float,
+        texture_weight_lbp: float,
+        texture_weight_gabor: float,
     ) -> None:
+        normalized_texture_mode = str(texture_mode or "append_to_color").strip().lower() or "append_to_color"
+        if normalized_texture_mode not in {"append_to_color"}:
+            normalized_texture_mode = "append_to_color"
+        normalized_texture_lbp_method = str(texture_lbp_method or "uniform").strip().lower() or "uniform"
+        if normalized_texture_lbp_method not in {"uniform", "ror", "default"}:
+            normalized_texture_lbp_method = "uniform"
+        normalized_texture_lbp_radii = [int(value) for value in texture_lbp_radii if int(value) > 0]
+        if not normalized_texture_lbp_radii:
+            normalized_texture_lbp_radii = [1]
+        normalized_texture_gabor_frequencies = [float(value) for value in texture_gabor_frequencies if float(value) > 0]
+        if not normalized_texture_gabor_frequencies:
+            normalized_texture_gabor_frequencies = [0.1, 0.2]
+        normalized_texture_gabor_thetas = [float(value) for value in texture_gabor_thetas]
+        if not normalized_texture_gabor_thetas:
+            normalized_texture_gabor_thetas = [0.0, 45.0, 90.0, 135.0]
         payload = (
             str(slic_algorithm or "slic").strip().lower() or "slic",
             str(preset_name or "medium").strip().lower() or "medium",
@@ -1961,6 +2666,31 @@ class Storage:
             max(0.01, float(compactness)),
             max(0.0, float(sigma)),
             str(colorspace or "lab").strip().lower() or "lab",
+            max(0.01, float(quickshift_ratio)),
+            max(1, int(quickshift_kernel_size)),
+            max(0.01, float(quickshift_max_dist)),
+            max(0.0, float(quickshift_sigma)),
+            max(0.01, float(felzenszwalb_scale)),
+            max(0.0, float(felzenszwalb_sigma)),
+            max(2, int(felzenszwalb_min_size)),
+            1 if bool(texture_enabled) else 0,
+            normalized_texture_mode,
+            1 if bool(texture_lbp_enabled) else 0,
+            max(1, int(texture_lbp_points)),
+            json.dumps(normalized_texture_lbp_radii),
+            normalized_texture_lbp_method,
+            1 if bool(texture_lbp_normalize) else 0,
+            1 if bool(texture_gabor_enabled) else 0,
+            json.dumps(normalized_texture_gabor_frequencies),
+            json.dumps(normalized_texture_gabor_thetas),
+            max(0.01, float(texture_gabor_bandwidth)),
+            1 if bool(texture_gabor_include_real) else 0,
+            1 if bool(texture_gabor_include_imag) else 0,
+            1 if bool(texture_gabor_include_magnitude) else 0,
+            1 if bool(texture_gabor_normalize) else 0,
+            max(0.01, float(texture_weight_color)),
+            max(0.0, float(texture_weight_lbp)),
+            max(0.0, float(texture_weight_gabor)),
             _utc_now_iso(),
             project_id,
         )
@@ -1974,6 +2704,31 @@ class Storage:
             slic_compactness = ?,
             slic_sigma = ?,
             slic_colorspace = ?,
+            quickshift_ratio = ?,
+            quickshift_kernel_size = ?,
+            quickshift_max_dist = ?,
+            quickshift_sigma = ?,
+            felzenszwalb_scale = ?,
+            felzenszwalb_sigma = ?,
+            felzenszwalb_min_size = ?,
+            texture_enabled = ?,
+            texture_mode = ?,
+            texture_lbp_enabled = ?,
+            texture_lbp_points = ?,
+            texture_lbp_radii_json = ?,
+            texture_lbp_method = ?,
+            texture_lbp_normalize = ?,
+            texture_gabor_enabled = ?,
+            texture_gabor_frequencies_json = ?,
+            texture_gabor_thetas_json = ?,
+            texture_gabor_bandwidth = ?,
+            texture_gabor_include_real = ?,
+            texture_gabor_include_imag = ?,
+            texture_gabor_include_magnitude = ?,
+            texture_gabor_normalize = ?,
+            texture_weight_color = ?,
+            texture_weight_lbp = ?,
+            texture_weight_gabor = ?,
             updated_at = ?
         WHERE id = ?
         """
@@ -1992,7 +2747,7 @@ class Storage:
             row = conn.execute(sql, (project_id, normalized_name)).fetchone()
         if row is None:
             return None
-        return dict(row)
+        return self._decode_json_fields(dict(row))
 
     def upsert_image_slic_override(
         self,
@@ -2006,8 +2761,48 @@ class Storage:
         compactness: float,
         sigma: float,
         colorspace: str,
+        quickshift_ratio: float,
+        quickshift_kernel_size: int,
+        quickshift_max_dist: float,
+        quickshift_sigma: float,
+        felzenszwalb_scale: float,
+        felzenszwalb_sigma: float,
+        felzenszwalb_min_size: int,
+        texture_enabled: bool,
+        texture_mode: str,
+        texture_lbp_enabled: bool,
+        texture_lbp_points: int,
+        texture_lbp_radii: list[int] | tuple[int, ...],
+        texture_lbp_method: str,
+        texture_lbp_normalize: bool,
+        texture_gabor_enabled: bool,
+        texture_gabor_frequencies: list[float] | tuple[float, ...],
+        texture_gabor_thetas: list[float] | tuple[float, ...],
+        texture_gabor_bandwidth: float,
+        texture_gabor_include_real: bool,
+        texture_gabor_include_imag: bool,
+        texture_gabor_include_magnitude: bool,
+        texture_gabor_normalize: bool,
+        texture_weight_color: float,
+        texture_weight_lbp: float,
+        texture_weight_gabor: float,
     ) -> None:
         normalized_name = Path(str(image_name)).name
+        normalized_texture_mode = str(texture_mode or "append_to_color").strip().lower() or "append_to_color"
+        if normalized_texture_mode not in {"append_to_color"}:
+            normalized_texture_mode = "append_to_color"
+        normalized_texture_lbp_method = str(texture_lbp_method or "uniform").strip().lower() or "uniform"
+        if normalized_texture_lbp_method not in {"uniform", "ror", "default"}:
+            normalized_texture_lbp_method = "uniform"
+        normalized_texture_lbp_radii = [int(value) for value in texture_lbp_radii if int(value) > 0]
+        if not normalized_texture_lbp_radii:
+            normalized_texture_lbp_radii = [1]
+        normalized_texture_gabor_frequencies = [float(value) for value in texture_gabor_frequencies if float(value) > 0]
+        if not normalized_texture_gabor_frequencies:
+            normalized_texture_gabor_frequencies = [0.1, 0.2]
+        normalized_texture_gabor_thetas = [float(value) for value in texture_gabor_thetas]
+        if not normalized_texture_gabor_thetas:
+            normalized_texture_gabor_thetas = [0.0, 45.0, 90.0, 135.0]
         payload = (
             project_id,
             normalized_name,
@@ -2018,14 +2813,47 @@ class Storage:
             max(0.01, float(compactness)),
             max(0.0, float(sigma)),
             str(colorspace or "lab").strip().lower() or "lab",
+            max(0.01, float(quickshift_ratio)),
+            max(1, int(quickshift_kernel_size)),
+            max(0.01, float(quickshift_max_dist)),
+            max(0.0, float(quickshift_sigma)),
+            max(0.01, float(felzenszwalb_scale)),
+            max(0.0, float(felzenszwalb_sigma)),
+            max(2, int(felzenszwalb_min_size)),
+            1 if bool(texture_enabled) else 0,
+            normalized_texture_mode,
+            1 if bool(texture_lbp_enabled) else 0,
+            max(1, int(texture_lbp_points)),
+            json.dumps(normalized_texture_lbp_radii),
+            normalized_texture_lbp_method,
+            1 if bool(texture_lbp_normalize) else 0,
+            1 if bool(texture_gabor_enabled) else 0,
+            json.dumps(normalized_texture_gabor_frequencies),
+            json.dumps(normalized_texture_gabor_thetas),
+            max(0.01, float(texture_gabor_bandwidth)),
+            1 if bool(texture_gabor_include_real) else 0,
+            1 if bool(texture_gabor_include_imag) else 0,
+            1 if bool(texture_gabor_include_magnitude) else 0,
+            1 if bool(texture_gabor_normalize) else 0,
+            max(0.01, float(texture_weight_color)),
+            max(0.0, float(texture_weight_lbp)),
+            max(0.0, float(texture_weight_gabor)),
             _utc_now_iso(),
         )
         sql = """
         INSERT INTO labeler_image_slic_overrides (
             project_id, image_name, slic_algorithm, preset_name, detail_level,
-            n_segments, compactness, sigma, colorspace, updated_at
+            n_segments, compactness, sigma, colorspace,
+            quickshift_ratio, quickshift_kernel_size, quickshift_max_dist, quickshift_sigma,
+            felzenszwalb_scale, felzenszwalb_sigma, felzenszwalb_min_size,
+            texture_enabled, texture_mode,
+            texture_lbp_enabled, texture_lbp_points, texture_lbp_radii_json, texture_lbp_method, texture_lbp_normalize,
+            texture_gabor_enabled, texture_gabor_frequencies_json, texture_gabor_thetas_json, texture_gabor_bandwidth,
+            texture_gabor_include_real, texture_gabor_include_imag, texture_gabor_include_magnitude, texture_gabor_normalize,
+            texture_weight_color, texture_weight_lbp, texture_weight_gabor,
+            updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(project_id, image_name) DO UPDATE SET
             slic_algorithm = excluded.slic_algorithm,
             preset_name = excluded.preset_name,
@@ -2034,6 +2862,31 @@ class Storage:
             compactness = excluded.compactness,
             sigma = excluded.sigma,
             colorspace = excluded.colorspace,
+            quickshift_ratio = excluded.quickshift_ratio,
+            quickshift_kernel_size = excluded.quickshift_kernel_size,
+            quickshift_max_dist = excluded.quickshift_max_dist,
+            quickshift_sigma = excluded.quickshift_sigma,
+            felzenszwalb_scale = excluded.felzenszwalb_scale,
+            felzenszwalb_sigma = excluded.felzenszwalb_sigma,
+            felzenszwalb_min_size = excluded.felzenszwalb_min_size,
+            texture_enabled = excluded.texture_enabled,
+            texture_mode = excluded.texture_mode,
+            texture_lbp_enabled = excluded.texture_lbp_enabled,
+            texture_lbp_points = excluded.texture_lbp_points,
+            texture_lbp_radii_json = excluded.texture_lbp_radii_json,
+            texture_lbp_method = excluded.texture_lbp_method,
+            texture_lbp_normalize = excluded.texture_lbp_normalize,
+            texture_gabor_enabled = excluded.texture_gabor_enabled,
+            texture_gabor_frequencies_json = excluded.texture_gabor_frequencies_json,
+            texture_gabor_thetas_json = excluded.texture_gabor_thetas_json,
+            texture_gabor_bandwidth = excluded.texture_gabor_bandwidth,
+            texture_gabor_include_real = excluded.texture_gabor_include_real,
+            texture_gabor_include_imag = excluded.texture_gabor_include_imag,
+            texture_gabor_include_magnitude = excluded.texture_gabor_include_magnitude,
+            texture_gabor_normalize = excluded.texture_gabor_normalize,
+            texture_weight_color = excluded.texture_weight_color,
+            texture_weight_lbp = excluded.texture_weight_lbp,
+            texture_weight_gabor = excluded.texture_weight_gabor,
             updated_at = excluded.updated_at
         """
         with self._connect() as conn:

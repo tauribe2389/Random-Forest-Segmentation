@@ -21,13 +21,39 @@
 
     <div class="dataset-selection-head">
       <h3>Select Images</h3>
-      <button type="button" id="toggle-all-images" class="secondary">Select All</button>
+      <button type="button" id="toggle-all-images" class="secondary">Select visible</button>
     </div>
 
     {% if workspace_images %}
-      <div class="collection-thumb-grid">
+      <div class="dataset-selection-toolbar">
+        <label class="dataset-selection-search">
+          Search filename
+          <input type="text" id="dataset-new-image-search" placeholder="Filter by filename">
+        </label>
+        <div class="dataset-selection-actions">
+          <span class="selection-count-pill" id="dataset-new-visible-pill">{{ workspace_images|length }} / {{ workspace_images|length }} shown</span>
+          <span class="selection-count-pill" id="dataset-new-selected-pill">{{ selected_images|length }} selected</span>
+        </div>
+      </div>
+      <div class="dataset-selection-pagination" id="dataset-new-pagination" hidden>
+        <div class="dataset-selection-pagination-main">
+          <button type="button" class="secondary" id="dataset-new-page-prev" aria-label="Previous images page">Prev</button>
+          <span class="dataset-selection-pagination-status" id="dataset-new-page-status">Page 1 of 1</span>
+          <button type="button" class="secondary" id="dataset-new-page-next" aria-label="Next images page">Next</button>
+        </div>
+        <label class="dataset-selection-pagination-size">
+          Per page
+          <select id="dataset-new-page-size">
+            <option value="24">24</option>
+            <option value="48" selected>48</option>
+            <option value="72">72</option>
+            <option value="96">96</option>
+          </select>
+        </label>
+      </div>
+      <div class="collection-thumb-grid dataset-selection-grid" id="dataset-new-grid">
         {% for image_name in workspace_images %}
-          <article class="collection-thumb-card">
+          <article class="collection-thumb-card dataset-new-image-card" data-image-name="{{ image_name|lower }}">
             <img
               class="collection-thumb-image"
               src="{{ url_for('labeler.api_image', workspace_id=workspace.id, image_name=image_name) }}"
@@ -48,6 +74,7 @@
           </article>
         {% endfor %}
       </div>
+      <p class="muted dataset-selection-empty" id="dataset-new-no-visible" hidden>No images match the current search.</p>
     {% else %}
       <p>No images found in this workspace. Upload images first from the Images page.</p>
     {% endif %}
@@ -61,38 +88,182 @@
 <script>
   (function () {
     var toggleBtn = document.getElementById("toggle-all-images");
-    if (!toggleBtn) {
+    var searchInput = document.getElementById("dataset-new-image-search");
+    var visiblePill = document.getElementById("dataset-new-visible-pill");
+    var selectedPill = document.getElementById("dataset-new-selected-pill");
+    var pageWrap = document.getElementById("dataset-new-pagination");
+    var pagePrevBtn = document.getElementById("dataset-new-page-prev");
+    var pageNextBtn = document.getElementById("dataset-new-page-next");
+    var pageStatus = document.getElementById("dataset-new-page-status");
+    var pageSizeSelect = document.getElementById("dataset-new-page-size");
+    var noVisibleEl = document.getElementById("dataset-new-no-visible");
+    var grid = document.getElementById("dataset-new-grid");
+    if (!toggleBtn || !grid) {
       return;
     }
-    var checkboxes = Array.prototype.slice.call(document.querySelectorAll("input[name='selected_images']"));
+    var cards = Array.prototype.slice.call(grid.querySelectorAll(".dataset-new-image-card"));
+    var checkboxes = Array.prototype.slice.call(grid.querySelectorAll("input[name='selected_images']"));
     if (!checkboxes.length) {
       toggleBtn.disabled = true;
       return;
     }
+    var state = {
+      page: 1,
+      pageSize: 48
+    };
 
-    function allChecked() {
-      return checkboxes.every(function (item) {
+    if (pageSizeSelect) {
+      var parsedInitial = Number(pageSizeSelect.value);
+      if (Number.isFinite(parsedInitial) && parsedInitial > 0) {
+        state.pageSize = Math.floor(parsedInitial);
+      }
+    }
+
+    function checkedCount() {
+      return checkboxes.filter(function (item) {
         return item.checked;
+      }).length;
+    }
+
+    function filteredCards() {
+      var query = searchInput ? String(searchInput.value || "").trim().toLowerCase() : "";
+      return cards.filter(function (card) {
+        var name = String(card.getAttribute("data-image-name") || "");
+        return !query || name.indexOf(query) >= 0;
       });
     }
 
-    function updateButtonText() {
-      toggleBtn.textContent = allChecked() ? "Clear All" : "Select All";
+    function visibleCards() {
+      return cards.filter(function (card) {
+        return !card.hidden;
+      });
+    }
+
+    function updateControls(filteredCount, pageCount, startIndex, endIndex) {
+      var selected = checkedCount();
+      if (selectedPill) {
+        selectedPill.textContent = selected + " selected";
+      }
+      if (visiblePill) {
+        var visible = visibleCards().length;
+        visiblePill.textContent = visible + " / " + filteredCount + " shown";
+      }
+      var visible = visibleCards();
+      var allVisibleChecked = visible.length > 0 && visible.every(function (card) {
+        var checkbox = card.querySelector("input[name='selected_images']");
+        return Boolean(checkbox && checkbox.checked);
+      });
+      toggleBtn.textContent = allVisibleChecked ? "Clear visible" : "Select visible";
+      toggleBtn.disabled = visible.length <= 0;
+
+      if (pageStatus) {
+        if (filteredCount <= 0) {
+          pageStatus.textContent = "No images";
+        } else {
+          pageStatus.textContent =
+            "Page " +
+            state.page +
+            " of " +
+            pageCount +
+            " • Showing " +
+            startIndex +
+            "-" +
+            endIndex +
+            " of " +
+            filteredCount;
+        }
+      }
+      if (pagePrevBtn) {
+        pagePrevBtn.disabled = filteredCount <= 0 || state.page <= 1;
+      }
+      if (pageNextBtn) {
+        pageNextBtn.disabled = filteredCount <= 0 || state.page >= pageCount;
+      }
+      if (pageWrap) {
+        pageWrap.hidden = filteredCount <= state.pageSize;
+      }
+      if (noVisibleEl) {
+        noVisibleEl.hidden = visible.length > 0;
+      }
+    }
+
+    function applyFilterAndPagination() {
+      var filtered = filteredCards();
+      var filteredCount = filtered.length;
+      var pageCount = Math.max(1, Math.ceil(filteredCount / state.pageSize));
+      if (state.page > pageCount) {
+        state.page = pageCount;
+      }
+      if (state.page < 1) {
+        state.page = 1;
+      }
+      var offsetStart = (state.page - 1) * state.pageSize;
+      var offsetEnd = offsetStart + state.pageSize;
+      cards.forEach(function (card) {
+        card.hidden = true;
+      });
+      filtered.forEach(function (card, index) {
+        card.hidden = !(index >= offsetStart && index < offsetEnd);
+      });
+      var visibleCount = Math.max(0, Math.min(filteredCount - offsetStart, state.pageSize));
+      var startIndex = filteredCount > 0 ? offsetStart + 1 : 0;
+      var endIndex = filteredCount > 0 ? offsetStart + visibleCount : 0;
+      updateControls(filteredCount, pageCount, startIndex, endIndex);
     }
 
     toggleBtn.addEventListener("click", function () {
-      var shouldCheck = !allChecked();
-      checkboxes.forEach(function (item) {
-        item.checked = shouldCheck;
+      var visible = visibleCards();
+      if (!visible.length) {
+        return;
+      }
+      var shouldCheck = visible.some(function (card) {
+        var checkbox = card.querySelector("input[name='selected_images']");
+        return Boolean(checkbox && !checkbox.checked);
       });
-      updateButtonText();
+      visible.forEach(function (card) {
+        var checkbox = card.querySelector("input[name='selected_images']");
+        if (checkbox) {
+          checkbox.checked = shouldCheck;
+        }
+      });
+      applyFilterAndPagination();
     });
+
+    if (searchInput) {
+      searchInput.addEventListener("input", function () {
+        state.page = 1;
+        applyFilterAndPagination();
+      });
+    }
+    if (pagePrevBtn) {
+      pagePrevBtn.addEventListener("click", function () {
+        state.page = Math.max(1, state.page - 1);
+        applyFilterAndPagination();
+      });
+    }
+    if (pageNextBtn) {
+      pageNextBtn.addEventListener("click", function () {
+        state.page += 1;
+        applyFilterAndPagination();
+      });
+    }
+    if (pageSizeSelect) {
+      pageSizeSelect.addEventListener("change", function () {
+        var parsed = Number(pageSizeSelect.value);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          return;
+        }
+        state.pageSize = Math.floor(parsed);
+        state.page = 1;
+        applyFilterAndPagination();
+      });
+    }
 
     checkboxes.forEach(function (item) {
-      item.addEventListener("change", updateButtonText);
+      item.addEventListener("change", applyFilterAndPagination);
     });
 
-    updateButtonText();
+    applyFilterAndPagination();
   })();
 </script>
 {% endblock %}

@@ -140,6 +140,51 @@ def _workspace_image_count(workspace: dict[str, Any]) -> int:
         return 0
 
 
+def _registered_dataset_image_names(dataset: dict[str, Any]) -> list[str]:
+    coco_json_raw = str(dataset.get("coco_json_path", "")).strip()
+    if coco_json_raw:
+        coco_json_path = Path(coco_json_raw).resolve()
+        if coco_json_path.exists() and coco_json_path.is_file():
+            try:
+                coco_payload = load_coco(coco_json_path)
+            except Exception:
+                coco_payload = {}
+            images = coco_payload.get("images", [])
+            if isinstance(images, list):
+                ordered_names: list[str] = []
+                seen: set[str] = set()
+                for item in images:
+                    if not isinstance(item, dict):
+                        continue
+                    file_name = str(item.get("file_name", "")).strip()
+                    if not file_name:
+                        continue
+                    normalized_key = file_name.lower()
+                    if normalized_key in seen:
+                        continue
+                    seen.add(normalized_key)
+                    ordered_names.append(file_name)
+                if ordered_names:
+                    return ordered_names
+
+    dataset_root_raw = str(dataset.get("dataset_path", "")).strip()
+    image_root_raw = str(dataset.get("image_root", "")).strip()
+    if not dataset_root_raw or not image_root_raw:
+        return []
+    dataset_root = Path(dataset_root_raw).resolve()
+    image_root_path = Path(image_root_raw)
+    if not image_root_path.is_absolute():
+        image_root_path = (dataset_root / image_root_path).resolve()
+    try:
+        return list_images(image_root_path)
+    except Exception:
+        return []
+
+
+def _registered_dataset_image_count(dataset: dict[str, Any]) -> int:
+    return len(_registered_dataset_image_names(dataset))
+
+
 def _workspace_images_dir(workspace: dict[str, Any]) -> Path:
     return Path(str(workspace.get("images_dir", ""))).resolve()
 
@@ -400,6 +445,59 @@ def _job_last_log(job: dict[str, Any]) -> str:
     return str(last_entry).strip()
 
 
+_ANALYSIS_IMAGE_PROGRESS_PATTERN = re.compile(r"analyzing image\s+(\d+)\s*/\s*(\d+)", re.IGNORECASE)
+_TRAINING_IMAGE_PROGRESS_PATTERN = re.compile(r"sampling image\s+(\d+)\s*/\s*(\d+)", re.IGNORECASE)
+
+
+def _job_log_entry_message(entry: Any) -> str:
+    if isinstance(entry, dict):
+        return str(entry.get("message", "")).strip()
+    return str(entry).strip()
+
+
+def _parse_image_progress(message: str, *, pattern: re.Pattern[str]) -> tuple[int, int] | None:
+    match = pattern.search(message)
+    if match is None:
+        return None
+    try:
+        current = int(match.group(1))
+        total = int(match.group(2))
+    except (TypeError, ValueError):
+        return None
+    if total <= 0:
+        return None
+    current = max(0, min(current, total))
+    return current, total
+
+
+def _job_progress_counter(job: dict[str, Any]) -> dict[str, Any] | None:
+    logs = job.get("logs_json")
+    if not isinstance(logs, list) or not logs:
+        return None
+    job_type = str(job.get("job_type", "")).strip().lower()
+    if job_type == "analysis":
+        candidates = [_ANALYSIS_IMAGE_PROGRESS_PATTERN]
+    elif job_type == "training":
+        candidates = [_TRAINING_IMAGE_PROGRESS_PATTERN]
+    else:
+        candidates = [_ANALYSIS_IMAGE_PROGRESS_PATTERN, _TRAINING_IMAGE_PROGRESS_PATTERN]
+    for entry in reversed(logs):
+        message = _job_log_entry_message(entry)
+        if not message:
+            continue
+        for pattern in candidates:
+            parsed = _parse_image_progress(message, pattern=pattern)
+            if parsed is None:
+                continue
+            current, total = parsed
+            return {
+                "current": current,
+                "total": total,
+                "label": f"{current}/{total} images",
+            }
+    return None
+
+
 def _job_progress_percent(job: dict[str, Any]) -> float:
     try:
         numeric = float(job.get("progress", 0.0))
@@ -415,6 +513,7 @@ def _job_progress_percent(job: dict[str, Any]) -> float:
 def _serialize_job(job: dict[str, Any], *, queue_positions: dict[int, int] | None = None) -> dict[str, Any]:
     job_id = int(job["id"])
     queue_position = queue_positions.get(job_id) if isinstance(queue_positions, dict) else None
+    progress_counter = _job_progress_counter(job)
     payload = {
         "id": job_id,
         "workspace_id": int(job.get("workspace_id", 0) or 0),
@@ -438,6 +537,10 @@ def _serialize_job(job: dict[str, Any], *, queue_positions: dict[int, int] | Non
         "rerun_of_job_id": int(job.get("rerun_of_job_id", 0) or 0),
         "last_log": _job_last_log(job),
     }
+    if progress_counter is not None:
+        payload["progress_counter_current"] = int(progress_counter["current"])
+        payload["progress_counter_total"] = int(progress_counter["total"])
+        payload["progress_counter_label"] = str(progress_counter["label"])
     if queue_position is not None:
         payload["queue_position"] = int(queue_position)
     return payload
@@ -1083,7 +1186,13 @@ def workspace_datasets(workspace_id: int) -> str:
     workspace = _workspace_by_id_or_404(workspace_id)
     storage = _storage()
     dataset_projects = storage.list_workspace_datasets(workspace_id)
-    registered_datasets = storage.list_datasets(workspace_id=workspace_id)
+    registered_datasets_raw = storage.list_datasets(workspace_id=workspace_id)
+    registered_datasets: list[dict[str, Any]] = []
+    for item in registered_datasets_raw:
+        row = dict(item)
+        row["image_count"] = _registered_dataset_image_count(row)
+        registered_datasets.append(row)
+
     registered_by_id = {int(item["id"]): item for item in registered_datasets}
     registered_by_draft: dict[int, list[dict[str, Any]]] = {}
     for item in registered_datasets:
@@ -1715,6 +1824,31 @@ def branch_workspace_dataset(workspace_id: int, dataset_id: int) -> str:
             ),
             slic_sigma=float(source_draft.get("slic_sigma") or current_app.config["LABELER_SLIC_SIGMA"]),
             slic_colorspace=str(source_draft.get("slic_colorspace", "lab")),
+            quickshift_ratio=float(source_draft.get("quickshift_ratio") or 1.0),
+            quickshift_kernel_size=int(source_draft.get("quickshift_kernel_size") or 5),
+            quickshift_max_dist=float(source_draft.get("quickshift_max_dist") or 10.0),
+            quickshift_sigma=float(source_draft.get("quickshift_sigma") or 0.0),
+            felzenszwalb_scale=float(source_draft.get("felzenszwalb_scale") or 100.0),
+            felzenszwalb_sigma=float(source_draft.get("felzenszwalb_sigma") or 0.8),
+            felzenszwalb_min_size=int(source_draft.get("felzenszwalb_min_size") or 50),
+            texture_enabled=bool(source_draft.get("texture_enabled")),
+            texture_mode=str(source_draft.get("texture_mode", "append_to_color")),
+            texture_lbp_enabled=bool(source_draft.get("texture_lbp_enabled")),
+            texture_lbp_points=int(source_draft.get("texture_lbp_points") or 8),
+            texture_lbp_radii=list(source_draft.get("texture_lbp_radii_json") or [1]),
+            texture_lbp_method=str(source_draft.get("texture_lbp_method", "uniform")),
+            texture_lbp_normalize=bool(source_draft.get("texture_lbp_normalize", True)),
+            texture_gabor_enabled=bool(source_draft.get("texture_gabor_enabled")),
+            texture_gabor_frequencies=list(source_draft.get("texture_gabor_frequencies_json") or [0.1, 0.2]),
+            texture_gabor_thetas=list(source_draft.get("texture_gabor_thetas_json") or [0.0, 45.0, 90.0, 135.0]),
+            texture_gabor_bandwidth=float(source_draft.get("texture_gabor_bandwidth") or 1.0),
+            texture_gabor_include_real=bool(source_draft.get("texture_gabor_include_real")),
+            texture_gabor_include_imag=bool(source_draft.get("texture_gabor_include_imag")),
+            texture_gabor_include_magnitude=bool(source_draft.get("texture_gabor_include_magnitude", True)),
+            texture_gabor_normalize=bool(source_draft.get("texture_gabor_normalize", True)),
+            texture_weight_color=float(source_draft.get("texture_weight_color") or 1.0),
+            texture_weight_lbp=float(source_draft.get("texture_weight_lbp") or 0.25),
+            texture_weight_gabor=float(source_draft.get("texture_weight_gabor") or 0.25),
             draft_version=1,
             origin_type="branched_from_draft",
             origin_draft_project_id=int(source_draft["id"]),
@@ -1836,6 +1970,8 @@ def workspace_registered_dataset_detail(workspace_id: int, dataset_id: int) -> s
     dataset = storage.get_dataset(dataset_id, workspace_id=workspace_id)
     if dataset is None:
         abort(404, description=f"Registered dataset id={dataset_id} not found in workspace.")
+    dataset = dict(dataset)
+    dataset["image_count"] = _registered_dataset_image_count(dataset)
 
     source_draft_project = None
     source_draft_id = dataset.get("source_draft_project_id")
@@ -1857,6 +1993,27 @@ def workspace_registered_dataset_detail(workspace_id: int, dataset_id: int) -> s
         dataset=dataset,
         source_draft_project=source_draft_project,
         related_models=related_models,
+    )
+
+
+@bp.route("/workspace/<int:workspace_id>/registered-datasets/images", methods=["GET"])
+def workspace_registered_dataset_images(workspace_id: int):
+    _workspace_by_id_or_404(workspace_id)
+    storage = _storage()
+    dataset_id = request.args.get("dataset_id", type=int)
+    if dataset_id is None or dataset_id <= 0:
+        return jsonify({"error": "dataset_id query param is required."}), 400
+    dataset = storage.get_dataset(dataset_id, workspace_id=workspace_id)
+    if dataset is None:
+        abort(404, description=f"Registered dataset id={dataset_id} not found in workspace.")
+    image_names = _registered_dataset_image_names(dataset)
+    return jsonify(
+        {
+            "workspace_id": workspace_id,
+            "dataset_id": dataset_id,
+            "count": len(image_names),
+            "images": image_names,
+        }
     )
 
 

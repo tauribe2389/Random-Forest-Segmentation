@@ -16,12 +16,14 @@ class UndoAction:
     sp_id: int
     previous_present: bool
     removed_from_class_ids: tuple[int, ...] = field(default_factory=tuple)
+    frozen_removed: tuple[tuple[int, np.ndarray], ...] = field(default_factory=tuple)
 
 
 @dataclass
 class ImageMaskState:
     segments: np.ndarray
     selected: dict[int, set[int]]
+    frozen_masks: dict[int, np.ndarray] = field(default_factory=dict)
     undo_stack: list[UndoAction] = field(default_factory=list)
     redo_stack: list[UndoAction] = field(default_factory=list)
     centroid_cache: dict[int, tuple[float, float]] | None = None
@@ -31,6 +33,8 @@ class ImageMaskState:
         selected_set = self.selected.setdefault(int(class_id), set())
         previous_present = sp_id in selected_set
         removed_from_class_ids: list[int] = []
+        frozen_removed: list[tuple[int, np.ndarray]] = []
+        region = self.segments == int(sp_id)
 
         if normalized_mode == "add":
             selected_set.add(sp_id)
@@ -40,12 +44,32 @@ class ImageMaskState:
                 if sp_id in other_selected:
                     other_selected.discard(sp_id)
                     removed_from_class_ids.append(int(other_class_id))
+            for frozen_class_id, frozen_mask in self.frozen_masks.items():
+                if tuple(frozen_mask.shape) != tuple(self.segments.shape):
+                    continue
+                removed_mask = region & frozen_mask
+                if not np.any(removed_mask):
+                    continue
+                removed_indices = np.flatnonzero(removed_mask)
+                frozen_mask[removed_mask] = False
+                frozen_removed.append((int(frozen_class_id), removed_indices))
         elif normalized_mode == "remove":
             selected_set.discard(sp_id)
+            frozen_mask = self.frozen_masks.get(int(class_id))
+            if isinstance(frozen_mask, np.ndarray) and tuple(frozen_mask.shape) == tuple(self.segments.shape):
+                removed_mask = region & frozen_mask
+                if np.any(removed_mask):
+                    removed_indices = np.flatnonzero(removed_mask)
+                    frozen_mask[removed_mask] = False
+                    frozen_removed.append((int(class_id), removed_indices))
         else:
             raise ValueError(f"Unknown mode: {mode}")
 
-        changed = ((sp_id in selected_set) != previous_present) or bool(removed_from_class_ids)
+        changed = (
+            ((sp_id in selected_set) != previous_present)
+            or bool(removed_from_class_ids)
+            or bool(frozen_removed)
+        )
         if changed:
             self.undo_stack.append(
                 UndoAction(
@@ -54,6 +78,10 @@ class ImageMaskState:
                     sp_id=sp_id,
                     previous_present=previous_present,
                     removed_from_class_ids=tuple(sorted(removed_from_class_ids)),
+                    frozen_removed=tuple(
+                        (int(cid), indices.astype(np.int64, copy=True))
+                        for cid, indices in frozen_removed
+                    ),
                 )
             )
             self.redo_stack.clear()
@@ -74,6 +102,10 @@ class ImageMaskState:
                 self.selected.setdefault(int(removed_class_id), set()).add(action.sp_id)
         elif action.mode != "remove":
             raise ValueError(f"Unknown undo/redo mode: {action.mode}")
+        for removed_class_id, removed_indices in action.frozen_removed:
+            frozen_mask = self.frozen_masks.get(int(removed_class_id))
+            if isinstance(frozen_mask, np.ndarray):
+                frozen_mask.flat[removed_indices] = True
         self.redo_stack.append(action)
         return action
 
@@ -91,12 +123,20 @@ class ImageMaskState:
             selected_set.discard(action.sp_id)
         else:
             raise ValueError(f"Unknown undo/redo mode: {action.mode}")
+        for removed_class_id, removed_indices in action.frozen_removed:
+            frozen_mask = self.frozen_masks.get(int(removed_class_id))
+            if isinstance(frozen_mask, np.ndarray):
+                frozen_mask.flat[removed_indices] = False
         self.undo_stack.append(action)
         return action
 
     def class_mask(self, class_id: int) -> np.ndarray:
         selected_set = self.selected.get(int(class_id), set())
-        return selected_superpixels_to_mask(self.segments, selected_set)
+        mask = selected_superpixels_to_mask(self.segments, selected_set)
+        frozen_mask = self.frozen_masks.get(int(class_id))
+        if isinstance(frozen_mask, np.ndarray) and tuple(frozen_mask.shape) == tuple(mask.shape):
+            mask = mask | frozen_mask
+        return mask
 
     def segment_centroids(self) -> dict[int, tuple[float, float]]:
         if self.centroid_cache is not None:

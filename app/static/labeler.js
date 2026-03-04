@@ -46,20 +46,62 @@
   const marqueeRect = document.getElementById("marquee-rect");
 
   const classSelect = document.getElementById("class-select");
+  const slicAlgorithmSelect = document.getElementById("slic-algorithm");
+  const slicAlgorithmNote = document.getElementById("slic-algorithm-note");
   const slicPresetModeSelect = document.getElementById("slic-preset-mode");
   const slicDetailWrap = document.getElementById("slic-detail-wrap");
   const slicDetailSelect = document.getElementById("slic-detail");
+  const slicColorspaceWrap = document.getElementById("slic-colorspace-wrap");
   const slicColorspaceSelect = document.getElementById("slic-colorspace");
   const slicCustomWrap = document.getElementById("slic-custom-wrap");
+  const quickshiftCustomWrap = document.getElementById("quickshift-custom-wrap");
+  const felzenszwalbCustomWrap = document.getElementById("felzenszwalb-custom-wrap");
+  const slicTextureWrap = document.getElementById("slic-texture-wrap");
+  const textureEnabledInput = document.getElementById("texture-enabled");
+  const textureLbpEnabledInput = document.getElementById("texture-lbp-enabled");
+  const textureLbpPointsInput = document.getElementById("texture-lbp-points");
+  const textureLbpRadiiInput = document.getElementById("texture-lbp-radii");
+  const textureLbpMethodSelect = document.getElementById("texture-lbp-method");
+  const textureLbpNormalizeInput = document.getElementById("texture-lbp-normalize");
+  const textureLbpOptions = document.getElementById("texture-lbp-options");
+  const textureGaborEnabledInput = document.getElementById("texture-gabor-enabled");
+  const textureGaborFrequenciesInput = document.getElementById("texture-gabor-frequencies");
+  const textureGaborThetasInput = document.getElementById("texture-gabor-thetas");
+  const textureGaborBandwidthInput = document.getElementById("texture-gabor-bandwidth");
+  const textureGaborIncludeRealInput = document.getElementById("texture-gabor-include-real");
+  const textureGaborIncludeImagInput = document.getElementById("texture-gabor-include-imag");
+  const textureGaborIncludeMagnitudeInput = document.getElementById("texture-gabor-include-magnitude");
+  const textureGaborNormalizeInput = document.getElementById("texture-gabor-normalize");
+  const textureGaborOptions = document.getElementById("texture-gabor-options");
+  const textureWeightColorInput = document.getElementById("texture-weight-color");
+  const textureWeightLbpInput = document.getElementById("texture-weight-lbp");
+  const textureWeightGaborInput = document.getElementById("texture-weight-gabor");
+  const textureWeightOptions = document.getElementById("texture-weight-options");
+  const slicCompactnessWrap = document.getElementById("slic-compactness-wrap");
   const slicNSegmentsInput = document.getElementById("slic-n-segments");
   const slicCompactnessInput = document.getElementById("slic-compactness");
   const slicSigmaInput = document.getElementById("slic-sigma");
   const slicNSegmentsValue = document.getElementById("slic-n-segments-value");
   const slicCompactnessValue = document.getElementById("slic-compactness-value");
   const slicSigmaValue = document.getElementById("slic-sigma-value");
+  const quickshiftRatioInput = document.getElementById("quickshift-ratio");
+  const quickshiftKernelSizeInput = document.getElementById("quickshift-kernel-size");
+  const quickshiftMaxDistInput = document.getElementById("quickshift-max-dist");
+  const quickshiftSigmaInput = document.getElementById("quickshift-sigma");
+  const quickshiftRatioValue = document.getElementById("quickshift-ratio-value");
+  const quickshiftKernelSizeValue = document.getElementById("quickshift-kernel-size-value");
+  const quickshiftMaxDistValue = document.getElementById("quickshift-max-dist-value");
+  const quickshiftSigmaValue = document.getElementById("quickshift-sigma-value");
+  const felzenszwalbScaleInput = document.getElementById("felzenszwalb-scale");
+  const felzenszwalbSigmaInput = document.getElementById("felzenszwalb-sigma");
+  const felzenszwalbMinSizeInput = document.getElementById("felzenszwalb-min-size");
+  const felzenszwalbScaleValue = document.getElementById("felzenszwalb-scale-value");
+  const felzenszwalbSigmaValue = document.getElementById("felzenszwalb-sigma-value");
+  const felzenszwalbMinSizeValue = document.getElementById("felzenszwalb-min-size-value");
   const recomputeSlicBtn = document.getElementById("recompute-slic-btn");
   const resetSlicDefaultBtn = document.getElementById("reset-slic-default-btn");
   const applySlicRemainingBtn = document.getElementById("apply-slic-remaining-btn");
+  const freezeMasksToggle = document.getElementById("freeze-masks-toggle");
 
   const addBtn = document.getElementById("mode-add");
   const removeBtn = document.getElementById("mode-remove");
@@ -108,8 +150,14 @@
   let marqueeStartViewport = null;
   let isImageSwitching = false;
 
+  let slicAlgorithm = String(slicCurrent.algorithm || "slic");
   let slicPresetMode = String(slicCurrent.preset_mode || "dataset_default");
   let slicDetailLevel = String(slicCurrent.detail_level || "medium");
+  const TEXTURE_DEFAULTS = {
+    lbpRadii: [1],
+    gaborFrequencies: [0.1, 0.2],
+    gaborThetas: [0, 45, 90, 135],
+  };
 
   function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
@@ -239,6 +287,114 @@
     return parsed;
   }
 
+  function normalizeSlicAlgorithm(value, fallback) {
+    var candidate = String(value || "").trim().toLowerCase();
+    if (candidate === "slic" || candidate === "slico" || candidate === "quickshift" || candidate === "felzenszwalb") {
+      return candidate;
+    }
+    var fallbackCandidate = String(fallback || "slic").trim().toLowerCase();
+    if (
+      fallbackCandidate === "slic" ||
+      fallbackCandidate === "slico" ||
+      fallbackCandidate === "quickshift" ||
+      fallbackCandidate === "felzenszwalb"
+    ) {
+      return fallbackCandidate;
+    }
+    return "slic";
+  }
+
+  function coerceBoolean(value, fallback) {
+    if (typeof value === "boolean") {
+      return value;
+    }
+    if (value === null || value === undefined) {
+      return Boolean(fallback);
+    }
+    if (typeof value === "number") {
+      return value !== 0;
+    }
+    var normalized = String(value).trim().toLowerCase();
+    if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
+      return true;
+    }
+    if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
+      return false;
+    }
+    return Boolean(fallback);
+  }
+
+  function normalizeIntegerList(value, fallback, minValue, maxValue) {
+    var rawItems = [];
+    if (Array.isArray(value)) {
+      rawItems = value.slice();
+    } else if (typeof value === "string") {
+      rawItems = value
+        .split(",")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+    }
+    var seen = new Set();
+    var normalized = [];
+    rawItems.forEach((item) => {
+      var parsed = Math.round(parseNumber(item, NaN));
+      if (!Number.isFinite(parsed)) {
+        return;
+      }
+      parsed = Math.max(minValue, Math.min(maxValue, parsed));
+      if (seen.has(parsed)) {
+        return;
+      }
+      seen.add(parsed);
+      normalized.push(parsed);
+    });
+    if (normalized.length > 0) {
+      return normalized;
+    }
+    return Array.isArray(fallback) ? fallback.slice() : [];
+  }
+
+  function normalizeFloatList(value, fallback, minValue, maxValue) {
+    var rawItems = [];
+    if (Array.isArray(value)) {
+      rawItems = value.slice();
+    } else if (typeof value === "string") {
+      rawItems = value
+        .split(",")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+    }
+    var normalized = [];
+    rawItems.forEach((item) => {
+      var parsed = parseNumber(item, NaN);
+      if (!Number.isFinite(parsed)) {
+        return;
+      }
+      parsed = Math.max(minValue, Math.min(maxValue, parsed));
+      normalized.push(parsed);
+    });
+    if (normalized.length > 0) {
+      return normalized;
+    }
+    return Array.isArray(fallback) ? fallback.slice() : [];
+  }
+
+  function formatNumberList(values, fallback, fractionDigits) {
+    var source = Array.isArray(values) && values.length > 0 ? values : Array.isArray(fallback) ? fallback : [];
+    return source
+      .map((value) => {
+        if (fractionDigits === null || fractionDigits === undefined) {
+          return String(value);
+        }
+        var numeric = parseNumber(value, NaN);
+        if (!Number.isFinite(numeric)) {
+          return String(value);
+        }
+        return numeric.toFixed(fractionDigits);
+      })
+      .join(",");
+  }
+
   function updateSlicSliderLabels() {
     if (slicNSegmentsInput && slicNSegmentsValue) {
       slicNSegmentsValue.textContent = String(Math.round(parseNumber(slicNSegmentsInput.value, 1200)));
@@ -248,6 +404,27 @@
     }
     if (slicSigmaInput && slicSigmaValue) {
       slicSigmaValue.textContent = parseNumber(slicSigmaInput.value, 1).toFixed(2);
+    }
+    if (quickshiftRatioInput && quickshiftRatioValue) {
+      quickshiftRatioValue.textContent = parseNumber(quickshiftRatioInput.value, 1).toFixed(2);
+    }
+    if (quickshiftKernelSizeInput && quickshiftKernelSizeValue) {
+      quickshiftKernelSizeValue.textContent = String(Math.round(parseNumber(quickshiftKernelSizeInput.value, 5)));
+    }
+    if (quickshiftMaxDistInput && quickshiftMaxDistValue) {
+      quickshiftMaxDistValue.textContent = parseNumber(quickshiftMaxDistInput.value, 10).toFixed(1);
+    }
+    if (quickshiftSigmaInput && quickshiftSigmaValue) {
+      quickshiftSigmaValue.textContent = parseNumber(quickshiftSigmaInput.value, 0).toFixed(2);
+    }
+    if (felzenszwalbScaleInput && felzenszwalbScaleValue) {
+      felzenszwalbScaleValue.textContent = parseNumber(felzenszwalbScaleInput.value, 100).toFixed(1);
+    }
+    if (felzenszwalbSigmaInput && felzenszwalbSigmaValue) {
+      felzenszwalbSigmaValue.textContent = parseNumber(felzenszwalbSigmaInput.value, 0.8).toFixed(2);
+    }
+    if (felzenszwalbMinSizeInput && felzenszwalbMinSizeValue) {
+      felzenszwalbMinSizeValue.textContent = String(Math.round(parseNumber(felzenszwalbMinSizeInput.value, 50)));
     }
   }
 
@@ -264,6 +441,88 @@
     if (slicColorspaceSelect && values.colorspace) {
       slicColorspaceSelect.value = String(values.colorspace);
     }
+    if (quickshiftRatioInput && values.quickshift_ratio !== undefined) {
+      quickshiftRatioInput.value = String(values.quickshift_ratio);
+    }
+    if (quickshiftKernelSizeInput && values.quickshift_kernel_size !== undefined) {
+      quickshiftKernelSizeInput.value = String(values.quickshift_kernel_size);
+    }
+    if (quickshiftMaxDistInput && values.quickshift_max_dist !== undefined) {
+      quickshiftMaxDistInput.value = String(values.quickshift_max_dist);
+    }
+    if (quickshiftSigmaInput && values.quickshift_sigma !== undefined) {
+      quickshiftSigmaInput.value = String(values.quickshift_sigma);
+    }
+    if (felzenszwalbScaleInput && values.felzenszwalb_scale !== undefined) {
+      felzenszwalbScaleInput.value = String(values.felzenszwalb_scale);
+    }
+    if (felzenszwalbSigmaInput && values.felzenszwalb_sigma !== undefined) {
+      felzenszwalbSigmaInput.value = String(values.felzenszwalb_sigma);
+    }
+    if (felzenszwalbMinSizeInput && values.felzenszwalb_min_size !== undefined) {
+      felzenszwalbMinSizeInput.value = String(values.felzenszwalb_min_size);
+    }
+    if (textureEnabledInput && values.texture_enabled !== undefined) {
+      textureEnabledInput.checked = coerceBoolean(values.texture_enabled, false);
+    }
+    if (textureLbpEnabledInput && values.texture_lbp_enabled !== undefined) {
+      textureLbpEnabledInput.checked = coerceBoolean(values.texture_lbp_enabled, false);
+    }
+    if (textureLbpPointsInput && values.texture_lbp_points !== undefined) {
+      textureLbpPointsInput.value = String(Math.round(parseNumber(values.texture_lbp_points, 8)));
+    }
+    if (textureLbpRadiiInput) {
+      var lbpRadiiValue = values.texture_lbp_radii !== undefined ? values.texture_lbp_radii : values.texture_lbp_radii_json;
+      var lbpRadii = normalizeIntegerList(lbpRadiiValue, TEXTURE_DEFAULTS.lbpRadii, 1, 64);
+      textureLbpRadiiInput.value = formatNumberList(lbpRadii, TEXTURE_DEFAULTS.lbpRadii, null);
+    }
+    if (textureLbpMethodSelect && values.texture_lbp_method) {
+      textureLbpMethodSelect.value = String(values.texture_lbp_method);
+    }
+    if (textureLbpNormalizeInput && values.texture_lbp_normalize !== undefined) {
+      textureLbpNormalizeInput.checked = coerceBoolean(values.texture_lbp_normalize, true);
+    }
+    if (textureGaborEnabledInput && values.texture_gabor_enabled !== undefined) {
+      textureGaborEnabledInput.checked = coerceBoolean(values.texture_gabor_enabled, false);
+    }
+    if (textureGaborFrequenciesInput) {
+      var gaborFrequenciesValue =
+        values.texture_gabor_frequencies !== undefined
+          ? values.texture_gabor_frequencies
+          : values.texture_gabor_frequencies_json;
+      var gaborFrequencies = normalizeFloatList(gaborFrequenciesValue, TEXTURE_DEFAULTS.gaborFrequencies, 0.001, 1.0);
+      textureGaborFrequenciesInput.value = formatNumberList(gaborFrequencies, TEXTURE_DEFAULTS.gaborFrequencies, 3);
+    }
+    if (textureGaborThetasInput) {
+      var gaborThetasValue =
+        values.texture_gabor_thetas !== undefined ? values.texture_gabor_thetas : values.texture_gabor_thetas_json;
+      var gaborThetas = normalizeFloatList(gaborThetasValue, TEXTURE_DEFAULTS.gaborThetas, 0.0, 179.999);
+      textureGaborThetasInput.value = formatNumberList(gaborThetas, TEXTURE_DEFAULTS.gaborThetas, 3);
+    }
+    if (textureGaborBandwidthInput && values.texture_gabor_bandwidth !== undefined) {
+      textureGaborBandwidthInput.value = parseNumber(values.texture_gabor_bandwidth, 1.0).toFixed(2);
+    }
+    if (textureGaborIncludeRealInput && values.texture_gabor_include_real !== undefined) {
+      textureGaborIncludeRealInput.checked = coerceBoolean(values.texture_gabor_include_real, false);
+    }
+    if (textureGaborIncludeImagInput && values.texture_gabor_include_imag !== undefined) {
+      textureGaborIncludeImagInput.checked = coerceBoolean(values.texture_gabor_include_imag, false);
+    }
+    if (textureGaborIncludeMagnitudeInput && values.texture_gabor_include_magnitude !== undefined) {
+      textureGaborIncludeMagnitudeInput.checked = coerceBoolean(values.texture_gabor_include_magnitude, true);
+    }
+    if (textureGaborNormalizeInput && values.texture_gabor_normalize !== undefined) {
+      textureGaborNormalizeInput.checked = coerceBoolean(values.texture_gabor_normalize, true);
+    }
+    if (textureWeightColorInput && values.texture_weight_color !== undefined) {
+      textureWeightColorInput.value = parseNumber(values.texture_weight_color, 1.0).toFixed(2);
+    }
+    if (textureWeightLbpInput && values.texture_weight_lbp !== undefined) {
+      textureWeightLbpInput.value = parseNumber(values.texture_weight_lbp, 0.25).toFixed(2);
+    }
+    if (textureWeightGaborInput && values.texture_weight_gabor !== undefined) {
+      textureWeightGaborInput.value = parseNumber(values.texture_weight_gabor, 0.25).toFixed(2);
+    }
     updateSlicSliderLabels();
   }
 
@@ -279,6 +538,78 @@
     });
   }
 
+  function updateAlgorithmCustomWraps(isCustomMode) {
+    var showSlic = isCustomMode && (slicAlgorithm === "slic" || slicAlgorithm === "slico");
+    var showQuickshift = isCustomMode && slicAlgorithm === "quickshift";
+    var showFelzenszwalb = isCustomMode && slicAlgorithm === "felzenszwalb";
+    if (slicCustomWrap) {
+      slicCustomWrap.style.display = showSlic ? "grid" : "none";
+    }
+    if (quickshiftCustomWrap) {
+      quickshiftCustomWrap.style.display = showQuickshift ? "grid" : "none";
+    }
+    if (felzenszwalbCustomWrap) {
+      felzenszwalbCustomWrap.style.display = showFelzenszwalb ? "grid" : "none";
+    }
+  }
+
+  function updateTextureControlsUI() {
+    var isSlicFamily = slicAlgorithm === "slic" || slicAlgorithm === "slico";
+    var allowSlicOverrides = slicPresetMode === "custom" || slicPresetMode === "detail";
+    var showSlicFamilyControls = allowSlicOverrides && isSlicFamily;
+    if (slicColorspaceWrap) {
+      slicColorspaceWrap.style.display = showSlicFamilyControls ? "" : "none";
+    }
+    if (slicTextureWrap) {
+      slicTextureWrap.style.display = showSlicFamilyControls ? "grid" : "none";
+    }
+    var textureEnabled = showSlicFamilyControls && textureEnabledInput && textureEnabledInput.checked;
+    var textureLbpEnabled = textureEnabled && textureLbpEnabledInput && textureLbpEnabledInput.checked;
+    var textureGaborEnabled = textureEnabled && textureGaborEnabledInput && textureGaborEnabledInput.checked;
+    if (textureLbpOptions) {
+      textureLbpOptions.style.display = textureLbpEnabled ? "grid" : "none";
+    }
+    if (textureGaborOptions) {
+      textureGaborOptions.style.display = textureGaborEnabled ? "grid" : "none";
+    }
+    if (textureWeightOptions) {
+      textureWeightOptions.style.display = textureEnabled ? "grid" : "none";
+    }
+  }
+
+  function updateSlicAlgorithmUI() {
+    if (slicAlgorithmSelect) {
+      slicAlgorithm = normalizeSlicAlgorithm(slicAlgorithmSelect.value, "slic");
+      slicAlgorithmSelect.value = slicAlgorithm;
+    } else {
+      slicAlgorithm = normalizeSlicAlgorithm(slicAlgorithm, "slic");
+    }
+    var usesSlico = slicAlgorithm === "slico";
+    var isSlic = slicAlgorithm === "slic";
+    var isQuickshift = slicAlgorithm === "quickshift";
+    var isFelzenszwalb = slicAlgorithm === "felzenszwalb";
+    if (slicCompactnessWrap) {
+      slicCompactnessWrap.style.display = usesSlico ? "none" : "";
+    }
+    if (slicAlgorithmNote) {
+      if (usesSlico) {
+        slicAlgorithmNote.textContent =
+          "SLICO adapts compactness automatically and ignores manual compactness tuning.";
+      } else if (isSlic) {
+        slicAlgorithmNote.textContent = "SLIC uses the configured compactness value.";
+      } else if (isQuickshift) {
+        slicAlgorithmNote.textContent =
+          "Quickshift clusters pixels by local density using ratio, kernel size, and max distance.";
+      } else if (isFelzenszwalb) {
+        slicAlgorithmNote.textContent =
+          "Felzenszwalb graph segmentation uses scale, sigma, and minimum segment size.";
+      } else {
+        slicAlgorithmNote.textContent = "";
+      }
+    }
+    updateAlgorithmCustomWraps(slicPresetMode === "custom");
+  }
+
   function updateSlicPresetUI() {
     if (slicPresetModeSelect) {
       slicPresetMode = String(slicPresetModeSelect.value || "dataset_default");
@@ -286,15 +617,25 @@
     if (slicDetailSelect) {
       slicDetailLevel = String(slicDetailSelect.value || "medium");
     }
+    if (slicAlgorithmSelect) {
+      slicAlgorithm = normalizeSlicAlgorithm(slicAlgorithmSelect.value, slicAlgorithm);
+    }
+    var isSlicFamily = slicAlgorithm === "slic" || slicAlgorithm === "slico";
+    if (!isSlicFamily && slicPresetMode === "detail") {
+      slicPresetMode = "custom";
+      if (slicPresetModeSelect) {
+        slicPresetModeSelect.value = "custom";
+      }
+    }
 
     if (slicPresetMode === "dataset_default") {
       if (slicDetailWrap) {
         slicDetailWrap.style.display = "none";
       }
-      if (slicCustomWrap) {
-        slicCustomWrap.style.display = "none";
-      }
+      updateAlgorithmCustomWraps(false);
       setSlicInputsFromValues(slicDefault);
+      updateSlicAlgorithmUI();
+      updateTextureControlsUI();
       return;
     }
 
@@ -302,36 +643,118 @@
       if (slicDetailWrap) {
         slicDetailWrap.style.display = "block";
       }
-      if (slicCustomWrap) {
-        slicCustomWrap.style.display = "none";
-      }
+      updateAlgorithmCustomWraps(false);
       applyDetailPresetInputs(slicDetailLevel);
+      updateSlicAlgorithmUI();
+      updateTextureControlsUI();
       return;
     }
 
     if (slicDetailWrap) {
       slicDetailWrap.style.display = "none";
     }
-    if (slicCustomWrap) {
-      slicCustomWrap.style.display = "grid";
-    }
+    updateAlgorithmCustomWraps(true);
+    updateSlicAlgorithmUI();
+    updateTextureControlsUI();
     updateSlicSliderLabels();
   }
 
   function currentSlicPayload(applyRemaining, forceOverwrite) {
+    var textureLbpRadii = normalizeIntegerList(
+      textureLbpRadiiInput ? textureLbpRadiiInput.value : "",
+      TEXTURE_DEFAULTS.lbpRadii,
+      1,
+      64
+    );
+    var textureGaborFrequencies = normalizeFloatList(
+      textureGaborFrequenciesInput ? textureGaborFrequenciesInput.value : "",
+      TEXTURE_DEFAULTS.gaborFrequencies,
+      0.001,
+      1.0
+    );
+    var textureGaborThetas = normalizeFloatList(
+      textureGaborThetasInput ? textureGaborThetasInput.value : "",
+      TEXTURE_DEFAULTS.gaborThetas,
+      0.0,
+      179.999
+    );
     const payload = {
       image_name: imageName,
+      algorithm: normalizeSlicAlgorithm(slicAlgorithm, "slic"),
       preset_mode: slicPresetMode,
       detail_level: slicDetailLevel,
       apply_remaining: Boolean(applyRemaining),
       force_overwrite: Boolean(forceOverwrite),
+      freeze_masks: freezeMasksToggle ? Boolean(freezeMasksToggle.checked) : false,
       colorspace: slicColorspaceSelect ? String(slicColorspaceSelect.value || "lab") : "lab",
+      texture_enabled: textureEnabledInput ? Boolean(textureEnabledInput.checked) : false,
+      texture_mode: "append_to_color",
+      texture_lbp_enabled: textureLbpEnabledInput ? Boolean(textureLbpEnabledInput.checked) : false,
+      texture_lbp_points: Math.round(parseNumber(textureLbpPointsInput && textureLbpPointsInput.value, 8)),
+      texture_lbp_radii: textureLbpRadii,
+      texture_lbp_method: textureLbpMethodSelect ? String(textureLbpMethodSelect.value || "uniform") : "uniform",
+      texture_lbp_normalize: textureLbpNormalizeInput ? Boolean(textureLbpNormalizeInput.checked) : true,
+      texture_gabor_enabled: textureGaborEnabledInput ? Boolean(textureGaborEnabledInput.checked) : false,
+      texture_gabor_frequencies: textureGaborFrequencies,
+      texture_gabor_thetas: textureGaborThetas,
+      texture_gabor_bandwidth: parseNumber(textureGaborBandwidthInput && textureGaborBandwidthInput.value, 1.0),
+      texture_gabor_include_real: textureGaborIncludeRealInput ? Boolean(textureGaborIncludeRealInput.checked) : false,
+      texture_gabor_include_imag: textureGaborIncludeImagInput ? Boolean(textureGaborIncludeImagInput.checked) : false,
+      texture_gabor_include_magnitude: textureGaborIncludeMagnitudeInput
+        ? Boolean(textureGaborIncludeMagnitudeInput.checked)
+        : true,
+      texture_gabor_normalize: textureGaborNormalizeInput ? Boolean(textureGaborNormalizeInput.checked) : true,
+      texture_weight_color: parseNumber(textureWeightColorInput && textureWeightColorInput.value, 1.0),
+      texture_weight_lbp: parseNumber(textureWeightLbpInput && textureWeightLbpInput.value, 0.25),
+      texture_weight_gabor: parseNumber(textureWeightGaborInput && textureWeightGaborInput.value, 0.25),
     };
+    if (textureLbpRadiiInput) {
+      textureLbpRadiiInput.value = formatNumberList(textureLbpRadii, TEXTURE_DEFAULTS.lbpRadii, null);
+    }
+    if (textureGaborFrequenciesInput) {
+      textureGaborFrequenciesInput.value = formatNumberList(
+        textureGaborFrequencies,
+        TEXTURE_DEFAULTS.gaborFrequencies,
+        3
+      );
+    }
+    if (textureGaborThetasInput) {
+      textureGaborThetasInput.value = formatNumberList(textureGaborThetas, TEXTURE_DEFAULTS.gaborThetas, 3);
+    }
+
+    if (
+      payload.texture_gabor_enabled &&
+      !payload.texture_gabor_include_real &&
+      !payload.texture_gabor_include_imag &&
+      !payload.texture_gabor_include_magnitude
+    ) {
+      payload.texture_gabor_include_magnitude = true;
+      if (textureGaborIncludeMagnitudeInput) {
+        textureGaborIncludeMagnitudeInput.checked = true;
+      }
+    }
+    if (payload.texture_enabled && !payload.texture_lbp_enabled && !payload.texture_gabor_enabled) {
+      payload.texture_enabled = false;
+    }
+    if (payload.algorithm !== "slic" && payload.algorithm !== "slico") {
+      payload.texture_enabled = false;
+    }
 
     if (slicPresetMode === "custom") {
       payload.n_segments = Math.round(parseNumber(slicNSegmentsInput && slicNSegmentsInput.value, 1200));
       payload.compactness = parseNumber(slicCompactnessInput && slicCompactnessInput.value, 10);
       payload.sigma = parseNumber(slicSigmaInput && slicSigmaInput.value, 1);
+      payload.quickshift_ratio = parseNumber(quickshiftRatioInput && quickshiftRatioInput.value, 1.0);
+      payload.quickshift_kernel_size = Math.round(
+        parseNumber(quickshiftKernelSizeInput && quickshiftKernelSizeInput.value, 5)
+      );
+      payload.quickshift_max_dist = parseNumber(quickshiftMaxDistInput && quickshiftMaxDistInput.value, 10.0);
+      payload.quickshift_sigma = parseNumber(quickshiftSigmaInput && quickshiftSigmaInput.value, 0.0);
+      payload.felzenszwalb_scale = parseNumber(felzenszwalbScaleInput && felzenszwalbScaleInput.value, 100.0);
+      payload.felzenszwalb_sigma = parseNumber(felzenszwalbSigmaInput && felzenszwalbSigmaInput.value, 0.8);
+      payload.felzenszwalb_min_size = Math.round(
+        parseNumber(felzenszwalbMinSizeInput && felzenszwalbMinSizeInput.value, 50)
+      );
     }
     return payload;
   }
@@ -830,8 +1253,15 @@
 
   function applySlicContext(nextSlic) {
     slicCurrent = nextSlic && typeof nextSlic === "object" ? nextSlic : {};
+    const allowedAlgorithms = new Set(["slic", "slico", "quickshift", "felzenszwalb"]);
     const allowedPresetModes = new Set(["dataset_default", "detail", "custom"]);
     const allowedDetailLevels = new Set(["low", "medium", "high"]);
+
+    const nextAlgorithm = normalizeSlicAlgorithm(slicCurrent.algorithm, "slic");
+    slicAlgorithm = allowedAlgorithms.has(nextAlgorithm) ? nextAlgorithm : "slic";
+    if (slicAlgorithmSelect) {
+      slicAlgorithmSelect.value = slicAlgorithm;
+    }
 
     const nextPresetMode = String(slicCurrent.preset_mode || "dataset_default");
     slicPresetMode = allowedPresetModes.has(nextPresetMode) ? nextPresetMode : "dataset_default";
@@ -894,6 +1324,9 @@
         nextImageUrl = context.next_image_url;
       }
       applySlicContext(context.slic_current || {});
+      if (freezeMasksToggle && Object.prototype.hasOwnProperty.call(context, "mask_freeze_default")) {
+        freezeMasksToggle.checked = Boolean(context.mask_freeze_default);
+      }
 
       const targetItem =
         findFilmstripItemByUrl(targetUrl) ||
@@ -1204,6 +1637,12 @@
       updateSlicPresetUI();
     });
   }
+  if (slicAlgorithmSelect) {
+    slicAlgorithmSelect.addEventListener("change", () => {
+      slicAlgorithm = normalizeSlicAlgorithm(slicAlgorithmSelect.value, "slic");
+      updateSlicPresetUI();
+    });
+  }
   if (slicDetailSelect) {
     slicDetailSelect.addEventListener("change", () => {
       slicDetailLevel = String(slicDetailSelect.value || "medium");
@@ -1220,6 +1659,36 @@
   }
   if (slicSigmaInput) {
     slicSigmaInput.addEventListener("input", updateSlicSliderLabels);
+  }
+  if (quickshiftRatioInput) {
+    quickshiftRatioInput.addEventListener("input", updateSlicSliderLabels);
+  }
+  if (quickshiftKernelSizeInput) {
+    quickshiftKernelSizeInput.addEventListener("input", updateSlicSliderLabels);
+  }
+  if (quickshiftMaxDistInput) {
+    quickshiftMaxDistInput.addEventListener("input", updateSlicSliderLabels);
+  }
+  if (quickshiftSigmaInput) {
+    quickshiftSigmaInput.addEventListener("input", updateSlicSliderLabels);
+  }
+  if (felzenszwalbScaleInput) {
+    felzenszwalbScaleInput.addEventListener("input", updateSlicSliderLabels);
+  }
+  if (felzenszwalbSigmaInput) {
+    felzenszwalbSigmaInput.addEventListener("input", updateSlicSliderLabels);
+  }
+  if (felzenszwalbMinSizeInput) {
+    felzenszwalbMinSizeInput.addEventListener("input", updateSlicSliderLabels);
+  }
+  if (textureEnabledInput) {
+    textureEnabledInput.addEventListener("change", updateTextureControlsUI);
+  }
+  if (textureLbpEnabledInput) {
+    textureLbpEnabledInput.addEventListener("change", updateTextureControlsUI);
+  }
+  if (textureGaborEnabledInput) {
+    textureGaborEnabledInput.addEventListener("change", updateTextureControlsUI);
   }
   if (recomputeSlicBtn) {
     recomputeSlicBtn.addEventListener("click", () => recomputeSuperpixels(false, false));

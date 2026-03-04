@@ -60,7 +60,16 @@
       <div class="accordion-body">
         <section class="slic-preset-panel">
           <h3>Superpixel Compute</h3>
-          <p class="muted">Algorithm: SLIC</p>
+          <label>
+            Algorithm
+            <select id="slic-algorithm">
+              <option value="slic" {% if slic_current.algorithm == 'slic' %}selected{% endif %}>SLIC</option>
+              <option value="slico" {% if slic_current.algorithm == 'slico' %}selected{% endif %}>SLICO</option>
+              <option value="quickshift" {% if slic_current.algorithm == 'quickshift' %}selected{% endif %}>Quickshift</option>
+              <option value="felzenszwalb" {% if slic_current.algorithm == 'felzenszwalb' %}selected{% endif %}>Felzenszwalb</option>
+            </select>
+          </label>
+          <p id="slic-algorithm-note" class="muted">SLIC uses the configured compactness value.</p>
           <label>
             Preset
             <select id="slic-preset-mode">
@@ -79,7 +88,7 @@
             </select>
           </label>
 
-          <label>
+          <label id="slic-colorspace-wrap">
             Colorspace
             <select id="slic-colorspace">
               <option value="lab" {% if slic_current.colorspace == 'lab' %}selected{% endif %}>Lab</option>
@@ -90,10 +99,10 @@
           <div id="slic-custom-wrap" class="slic-custom-grid">
             <label>
               Target Superpixel Count
-              <input id="slic-n-segments" type="range" min="50" max="5000" step="10" value="{{ slic_current.n_segments }}">
+              <input id="slic-n-segments" type="range" min="50" max="40000" step="10" value="{{ slic_current.n_segments }}">
               <span id="slic-n-segments-value">{{ slic_current.n_segments }}</span>
             </label>
-            <label>
+            <label id="slic-compactness-wrap">
               Compactness
               <input id="slic-compactness" type="range" min="0.1" max="80" step="0.1" value="{{ slic_current.compactness }}">
               <span id="slic-compactness-value">{{ "%.2f"|format(slic_current.compactness) }}</span>
@@ -105,11 +114,142 @@
             </label>
           </div>
 
+          <div id="quickshift-custom-wrap" class="slic-custom-grid">
+            <label>
+              Ratio
+              <input id="quickshift-ratio" type="range" min="0.1" max="20" step="0.1" value="{{ "%.2f"|format(slic_current.quickshift_ratio) }}">
+              <span id="quickshift-ratio-value">{{ "%.2f"|format(slic_current.quickshift_ratio) }}</span>
+            </label>
+            <label>
+              Kernel Size
+              <input id="quickshift-kernel-size" type="range" min="1" max="100" step="1" value="{{ slic_current.quickshift_kernel_size }}">
+              <span id="quickshift-kernel-size-value">{{ slic_current.quickshift_kernel_size }}</span>
+            </label>
+            <label>
+              Max Distance
+              <input id="quickshift-max-dist" type="range" min="1" max="200" step="1" value="{{ "%.1f"|format(slic_current.quickshift_max_dist) }}">
+              <span id="quickshift-max-dist-value">{{ "%.1f"|format(slic_current.quickshift_max_dist) }}</span>
+            </label>
+            <label>
+              Sigma (pre-blur)
+              <input id="quickshift-sigma" type="range" min="0" max="10" step="0.1" value="{{ "%.2f"|format(slic_current.quickshift_sigma) }}">
+              <span id="quickshift-sigma-value">{{ "%.2f"|format(slic_current.quickshift_sigma) }}</span>
+            </label>
+          </div>
+
+          <div id="felzenszwalb-custom-wrap" class="slic-custom-grid">
+            <label>
+              Scale
+              <input id="felzenszwalb-scale" type="range" min="1" max="5000" step="1" value="{{ "%.1f"|format(slic_current.felzenszwalb_scale) }}">
+              <span id="felzenszwalb-scale-value">{{ "%.1f"|format(slic_current.felzenszwalb_scale) }}</span>
+            </label>
+            <label>
+              Sigma (pre-blur)
+              <input id="felzenszwalb-sigma" type="range" min="0" max="10" step="0.1" value="{{ "%.2f"|format(slic_current.felzenszwalb_sigma) }}">
+              <span id="felzenszwalb-sigma-value">{{ "%.2f"|format(slic_current.felzenszwalb_sigma) }}</span>
+            </label>
+            <label>
+              Min Segment Size
+              <input id="felzenszwalb-min-size" type="range" min="2" max="50000" step="1" value="{{ slic_current.felzenszwalb_min_size }}">
+              <span id="felzenszwalb-min-size-value">{{ slic_current.felzenszwalb_min_size }}</span>
+            </label>
+          </div>
+
+          <div id="slic-texture-wrap" class="slic-custom-grid">
+            <label class="checkbox">
+              <input id="texture-enabled" type="checkbox" {% if slic_current.texture_enabled %}checked{% endif %}>
+              Enable texture channels (SLIC/SLICO only)
+            </label>
+            <p class="muted">Texture channels are appended to color features and weighted before SLIC/SLICO.</p>
+
+            <label class="checkbox">
+              <input id="texture-lbp-enabled" type="checkbox" {% if slic_current.texture_lbp_enabled %}checked{% endif %}>
+              Use LBP texture
+            </label>
+            <div id="texture-lbp-options" class="slic-custom-grid">
+              <label>
+                LBP Points
+                <input id="texture-lbp-points" type="number" min="4" max="128" step="1" value="{{ slic_current.texture_lbp_points }}">
+              </label>
+              <label>
+                LBP Radii (comma separated)
+                <input id="texture-lbp-radii" type="text" value="{{ slic_current.texture_lbp_radii|join(',') }}">
+              </label>
+              <label>
+                LBP Method
+                <select id="texture-lbp-method">
+                  <option value="uniform" {% if slic_current.texture_lbp_method == 'uniform' %}selected{% endif %}>Uniform</option>
+                  <option value="ror" {% if slic_current.texture_lbp_method == 'ror' %}selected{% endif %}>ROR</option>
+                  <option value="default" {% if slic_current.texture_lbp_method == 'default' %}selected{% endif %}>Default</option>
+                </select>
+              </label>
+              <label class="checkbox">
+                <input id="texture-lbp-normalize" type="checkbox" {% if slic_current.texture_lbp_normalize %}checked{% endif %}>
+                Normalize LBP channels
+              </label>
+            </div>
+
+            <label class="checkbox">
+              <input id="texture-gabor-enabled" type="checkbox" {% if slic_current.texture_gabor_enabled %}checked{% endif %}>
+              Use Gabor texture
+            </label>
+            <div id="texture-gabor-options" class="slic-custom-grid">
+              <label>
+                Gabor Frequencies
+                <input id="texture-gabor-frequencies" type="text" value="{{ slic_current.texture_gabor_frequencies|join(',') }}">
+              </label>
+              <label>
+                Gabor Thetas (deg)
+                <input id="texture-gabor-thetas" type="text" value="{{ slic_current.texture_gabor_thetas|join(',') }}">
+              </label>
+              <label>
+                Gabor Bandwidth
+                <input id="texture-gabor-bandwidth" type="number" min="0.01" max="10" step="0.01" value="{{ "%.2f"|format(slic_current.texture_gabor_bandwidth) }}">
+              </label>
+              <label class="checkbox">
+                <input id="texture-gabor-include-real" type="checkbox" {% if slic_current.texture_gabor_include_real %}checked{% endif %}>
+                Include Real
+              </label>
+              <label class="checkbox">
+                <input id="texture-gabor-include-imag" type="checkbox" {% if slic_current.texture_gabor_include_imag %}checked{% endif %}>
+                Include Imaginary
+              </label>
+              <label class="checkbox">
+                <input id="texture-gabor-include-magnitude" type="checkbox" {% if slic_current.texture_gabor_include_magnitude %}checked{% endif %}>
+                Include Magnitude
+              </label>
+              <label class="checkbox">
+                <input id="texture-gabor-normalize" type="checkbox" {% if slic_current.texture_gabor_normalize %}checked{% endif %}>
+                Normalize Gabor channels
+              </label>
+            </div>
+
+            <div id="texture-weight-options" class="slic-custom-grid">
+              <label>
+                Color Weight
+                <input id="texture-weight-color" type="number" min="0.01" max="10" step="0.01" value="{{ "%.2f"|format(slic_current.texture_weight_color) }}">
+              </label>
+              <label>
+                LBP Weight
+                <input id="texture-weight-lbp" type="number" min="0" max="10" step="0.01" value="{{ "%.2f"|format(slic_current.texture_weight_lbp) }}">
+              </label>
+              <label>
+                Gabor Weight
+                <input id="texture-weight-gabor" type="number" min="0" max="10" step="0.01" value="{{ "%.2f"|format(slic_current.texture_weight_gabor) }}">
+              </label>
+            </div>
+          </div>
+
           <div class="slic-action-grid">
+            <label class="checkbox">
+              <input id="freeze-masks-toggle" type="checkbox" {% if freeze_masks_default %}checked{% endif %}>
+              Freeze existing masks during recompute
+            </label>
             <button id="recompute-slic-btn" type="button">Recompute Superpixels</button>
             <button id="reset-slic-default-btn" type="button" class="secondary">Reset to Dataset Default</button>
             <button id="apply-slic-remaining-btn" type="button" class="secondary">Apply to Remaining Images</button>
           </div>
+          <p class="muted">Freeze keeps current masks as locked seed labels while recomputing superpixels.</p>
         </section>
       </div>
     </details>

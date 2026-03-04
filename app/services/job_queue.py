@@ -20,6 +20,26 @@ from .storage import Storage
 from .training import train_model
 
 TERMINAL_STATUSES = {"completed", "failed", "canceled"}
+SUPERPIXEL_TEXTURE_DEFAULTS: dict[str, Any] = {
+    "texture_enabled": False,
+    "texture_mode": "append_to_color",
+    "texture_lbp_enabled": False,
+    "texture_lbp_points": 8,
+    "texture_lbp_radii": [1],
+    "texture_lbp_method": "uniform",
+    "texture_lbp_normalize": True,
+    "texture_gabor_enabled": False,
+    "texture_gabor_frequencies": [0.1, 0.2],
+    "texture_gabor_thetas": [0.0, 45.0, 90.0, 135.0],
+    "texture_gabor_bandwidth": 1.0,
+    "texture_gabor_include_real": False,
+    "texture_gabor_include_imag": False,
+    "texture_gabor_include_magnitude": True,
+    "texture_gabor_normalize": True,
+    "texture_weight_color": 1.0,
+    "texture_weight_lbp": 0.25,
+    "texture_weight_gabor": 0.25,
+}
 
 
 def _utc_now_iso() -> str:
@@ -256,6 +276,13 @@ class JobQueueManager:
             return "loading_annotations", 0.12
         if lowered.startswith("split images into"):
             return "sampling_pixels", 0.22
+        sampling_match = re.search(r"sampling image\s+(\d+)\s*/\s*(\d+)", lowered)
+        if sampling_match:
+            current = max(1, int(sampling_match.group(1)))
+            total = max(1, int(sampling_match.group(2)))
+            current = min(current, total)
+            fractional = float(current) / float(total)
+            return "sampling_pixels", 0.22 + (0.42 * fractional)
         if lowered.startswith("training randomforestclassifier"):
             return "training_model", 0.68
         if lowered.startswith("running validation"):
@@ -273,10 +300,11 @@ class JobQueueManager:
             return "loading_model", 0.12
         if lowered.startswith("writing outputs to"):
             return "preparing_outputs", 0.2
-        match = re.search(r"analyzing image\s+(\d+)/(\d+)", lowered)
+        match = re.search(r"analyzing image\s+(\d+)\s*/\s*(\d+)", lowered)
         if match:
             current = max(1, int(match.group(1)))
             total = max(1, int(match.group(2)))
+            current = min(current, total)
             fractional = float(current) / float(total)
             return "running_inference", 0.2 + (0.7 * fractional)
         return "running", None
@@ -479,6 +507,16 @@ class JobQueueManager:
             return candidate
         return "lab"
 
+    @staticmethod
+    def _normalize_slic_algorithm(value: Any, *, fallback: str = "slic") -> str:
+        candidate = str(value or "").strip().lower()
+        if candidate in {"slic", "slico", "quickshift", "felzenszwalb"}:
+            return candidate
+        fallback_candidate = str(fallback or "slic").strip().lower()
+        if fallback_candidate in {"slic", "slico", "quickshift", "felzenszwalb"}:
+            return fallback_candidate
+        return "slic"
+
     @classmethod
     def _normalize_slic_values(
         cls,
@@ -492,7 +530,7 @@ class JobQueueManager:
             normalized_segments = int(float(n_segments))
         except (TypeError, ValueError):
             normalized_segments = 1200
-        normalized_segments = max(50, min(5000, normalized_segments))
+        normalized_segments = max(50, min(40000, normalized_segments))
 
         try:
             normalized_compactness = float(compactness)
@@ -508,6 +546,266 @@ class JobQueueManager:
         normalized_colorspace = cls._normalize_slic_colorspace(colorspace)
         return normalized_segments, normalized_compactness, normalized_sigma, normalized_colorspace
 
+    @staticmethod
+    def _normalize_quickshift_values(
+        *,
+        ratio: Any,
+        kernel_size: Any,
+        max_dist: Any,
+        sigma: Any,
+    ) -> tuple[float, int, float, float]:
+        try:
+            normalized_ratio = float(ratio)
+        except (TypeError, ValueError):
+            normalized_ratio = 1.0
+        normalized_ratio = max(0.01, min(20.0, normalized_ratio))
+
+        try:
+            normalized_kernel_size = int(float(kernel_size))
+        except (TypeError, ValueError):
+            normalized_kernel_size = 5
+        normalized_kernel_size = max(1, min(100, normalized_kernel_size))
+
+        try:
+            normalized_max_dist = float(max_dist)
+        except (TypeError, ValueError):
+            normalized_max_dist = 10.0
+        normalized_max_dist = max(0.01, min(200.0, normalized_max_dist))
+
+        try:
+            normalized_sigma = float(sigma)
+        except (TypeError, ValueError):
+            normalized_sigma = 0.0
+        normalized_sigma = max(0.0, min(10.0, normalized_sigma))
+        return normalized_ratio, normalized_kernel_size, normalized_max_dist, normalized_sigma
+
+    @staticmethod
+    def _normalize_felzenszwalb_values(
+        *,
+        scale: Any,
+        sigma: Any,
+        min_size: Any,
+    ) -> tuple[float, float, int]:
+        try:
+            normalized_scale = float(scale)
+        except (TypeError, ValueError):
+            normalized_scale = 100.0
+        normalized_scale = max(0.01, min(10000.0, normalized_scale))
+
+        try:
+            normalized_sigma = float(sigma)
+        except (TypeError, ValueError):
+            normalized_sigma = 0.8
+        normalized_sigma = max(0.0, min(10.0, normalized_sigma))
+
+        try:
+            normalized_min_size = int(float(min_size))
+        except (TypeError, ValueError):
+            normalized_min_size = 50
+        normalized_min_size = max(2, min(50000, normalized_min_size))
+        return normalized_scale, normalized_sigma, normalized_min_size
+
+    @staticmethod
+    def _coerce_bool(value: Any, *, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return bool(value)
+        candidate = str(value).strip().lower()
+        if candidate in {"1", "true", "yes", "on", "y"}:
+            return True
+        if candidate in {"0", "false", "no", "off", "n"}:
+            return False
+        return default
+
+    @staticmethod
+    def _normalize_int_list(
+        value: Any,
+        *,
+        fallback: list[int],
+        min_value: int,
+        max_value: int,
+    ) -> list[int]:
+        raw_items: list[Any]
+        if isinstance(value, list):
+            raw_items = list(value)
+        elif isinstance(value, tuple):
+            raw_items = list(value)
+        elif isinstance(value, str):
+            raw_items = [item.strip() for item in value.split(",") if item.strip()]
+        else:
+            raw_items = []
+        normalized: list[int] = []
+        seen: set[int] = set()
+        for item in raw_items:
+            try:
+                parsed = int(float(item))
+            except (TypeError, ValueError):
+                continue
+            parsed = max(min_value, min(max_value, parsed))
+            if parsed in seen:
+                continue
+            seen.add(parsed)
+            normalized.append(parsed)
+        if normalized:
+            return normalized
+        return list(fallback)
+
+    @staticmethod
+    def _normalize_float_list(
+        value: Any,
+        *,
+        fallback: list[float],
+        min_value: float,
+        max_value: float,
+    ) -> list[float]:
+        raw_items: list[Any]
+        if isinstance(value, list):
+            raw_items = list(value)
+        elif isinstance(value, tuple):
+            raw_items = list(value)
+        elif isinstance(value, str):
+            raw_items = [item.strip() for item in value.split(",") if item.strip()]
+        else:
+            raw_items = []
+        normalized: list[float] = []
+        for item in raw_items:
+            try:
+                parsed = float(item)
+            except (TypeError, ValueError):
+                continue
+            parsed = max(min_value, min(max_value, parsed))
+            normalized.append(parsed)
+        if normalized:
+            return normalized
+        return list(fallback)
+
+    @classmethod
+    def _normalize_texture_settings(
+        cls,
+        values: dict[str, Any],
+        *,
+        fallback: dict[str, Any] | None = None,
+        algorithm: str = "slic",
+    ) -> dict[str, Any]:
+        base = dict(SUPERPIXEL_TEXTURE_DEFAULTS)
+        if isinstance(fallback, dict):
+            base.update(fallback)
+
+        texture_mode = str(values.get("texture_mode", base["texture_mode"])).strip().lower() or "append_to_color"
+        if texture_mode not in {"append_to_color"}:
+            texture_mode = "append_to_color"
+        texture_lbp_method = str(values.get("texture_lbp_method", base["texture_lbp_method"])).strip().lower() or "uniform"
+        if texture_lbp_method not in {"uniform", "ror", "default"}:
+            texture_lbp_method = "uniform"
+
+        texture_lbp_radii = cls._normalize_int_list(
+            values.get("texture_lbp_radii", values.get("texture_lbp_radii_json", base["texture_lbp_radii"])),
+            fallback=[int(item) for item in base["texture_lbp_radii"]],
+            min_value=1,
+            max_value=64,
+        )
+        texture_gabor_frequencies = cls._normalize_float_list(
+            values.get(
+                "texture_gabor_frequencies",
+                values.get("texture_gabor_frequencies_json", base["texture_gabor_frequencies"]),
+            ),
+            fallback=[float(item) for item in base["texture_gabor_frequencies"]],
+            min_value=0.001,
+            max_value=1.0,
+        )
+        texture_gabor_thetas = cls._normalize_float_list(
+            values.get("texture_gabor_thetas", values.get("texture_gabor_thetas_json", base["texture_gabor_thetas"])),
+            fallback=[float(item) for item in base["texture_gabor_thetas"]],
+            min_value=0.0,
+            max_value=179.999,
+        )
+
+        try:
+            texture_lbp_points = int(float(values.get("texture_lbp_points", base["texture_lbp_points"])))
+        except (TypeError, ValueError):
+            texture_lbp_points = int(base["texture_lbp_points"])
+        texture_lbp_points = max(4, min(128, texture_lbp_points))
+
+        try:
+            texture_gabor_bandwidth = float(values.get("texture_gabor_bandwidth", base["texture_gabor_bandwidth"]))
+        except (TypeError, ValueError):
+            texture_gabor_bandwidth = float(base["texture_gabor_bandwidth"])
+        texture_gabor_bandwidth = max(0.01, min(10.0, texture_gabor_bandwidth))
+
+        try:
+            texture_weight_color = float(values.get("texture_weight_color", base["texture_weight_color"]))
+        except (TypeError, ValueError):
+            texture_weight_color = float(base["texture_weight_color"])
+        texture_weight_color = max(0.01, min(10.0, texture_weight_color))
+
+        try:
+            texture_weight_lbp = float(values.get("texture_weight_lbp", base["texture_weight_lbp"]))
+        except (TypeError, ValueError):
+            texture_weight_lbp = float(base["texture_weight_lbp"])
+        texture_weight_lbp = max(0.0, min(10.0, texture_weight_lbp))
+
+        try:
+            texture_weight_gabor = float(values.get("texture_weight_gabor", base["texture_weight_gabor"]))
+        except (TypeError, ValueError):
+            texture_weight_gabor = float(base["texture_weight_gabor"])
+        texture_weight_gabor = max(0.0, min(10.0, texture_weight_gabor))
+
+        normalized = {
+            "texture_enabled": cls._coerce_bool(values.get("texture_enabled"), default=bool(base["texture_enabled"])),
+            "texture_mode": texture_mode,
+            "texture_lbp_enabled": cls._coerce_bool(
+                values.get("texture_lbp_enabled"),
+                default=bool(base["texture_lbp_enabled"]),
+            ),
+            "texture_lbp_points": texture_lbp_points,
+            "texture_lbp_radii": texture_lbp_radii,
+            "texture_lbp_method": texture_lbp_method,
+            "texture_lbp_normalize": cls._coerce_bool(
+                values.get("texture_lbp_normalize"),
+                default=bool(base["texture_lbp_normalize"]),
+            ),
+            "texture_gabor_enabled": cls._coerce_bool(
+                values.get("texture_gabor_enabled"),
+                default=bool(base["texture_gabor_enabled"]),
+            ),
+            "texture_gabor_frequencies": texture_gabor_frequencies,
+            "texture_gabor_thetas": texture_gabor_thetas,
+            "texture_gabor_bandwidth": texture_gabor_bandwidth,
+            "texture_gabor_include_real": cls._coerce_bool(
+                values.get("texture_gabor_include_real"),
+                default=bool(base["texture_gabor_include_real"]),
+            ),
+            "texture_gabor_include_imag": cls._coerce_bool(
+                values.get("texture_gabor_include_imag"),
+                default=bool(base["texture_gabor_include_imag"]),
+            ),
+            "texture_gabor_include_magnitude": cls._coerce_bool(
+                values.get("texture_gabor_include_magnitude"),
+                default=bool(base["texture_gabor_include_magnitude"]),
+            ),
+            "texture_gabor_normalize": cls._coerce_bool(
+                values.get("texture_gabor_normalize"),
+                default=bool(base["texture_gabor_normalize"]),
+            ),
+            "texture_weight_color": texture_weight_color,
+            "texture_weight_lbp": texture_weight_lbp,
+            "texture_weight_gabor": texture_weight_gabor,
+        }
+        if normalized["texture_gabor_enabled"] and not (
+            normalized["texture_gabor_include_real"]
+            or normalized["texture_gabor_include_imag"]
+            or normalized["texture_gabor_include_magnitude"]
+        ):
+            normalized["texture_gabor_include_magnitude"] = True
+        if normalized["texture_enabled"] and not (normalized["texture_lbp_enabled"] or normalized["texture_gabor_enabled"]):
+            normalized["texture_enabled"] = False
+        if str(algorithm or "").strip().lower() not in {"slic", "slico"}:
+            normalized["texture_enabled"] = False
+        return normalized
+
     def _effective_dataset_slic_for_image(
         self,
         *,
@@ -515,32 +813,92 @@ class JobQueueManager:
         dataset: dict[str, Any],
         image_name: str,
     ) -> dict[str, Any]:
+        algorithm = self._normalize_slic_algorithm(dataset.get("slic_algorithm"), fallback="slic")
         n_segments, compactness, sigma, colorspace = self._normalize_slic_values(
             n_segments=dataset.get("slic_n_segments"),
             compactness=dataset.get("slic_compactness"),
             sigma=dataset.get("slic_sigma"),
             colorspace=dataset.get("slic_colorspace"),
         )
+        quickshift_ratio, quickshift_kernel_size, quickshift_max_dist, quickshift_sigma = self._normalize_quickshift_values(
+            ratio=dataset.get("quickshift_ratio"),
+            kernel_size=dataset.get("quickshift_kernel_size"),
+            max_dist=dataset.get("quickshift_max_dist"),
+            sigma=dataset.get("quickshift_sigma"),
+        )
+        felzenszwalb_scale, felzenszwalb_sigma, felzenszwalb_min_size = self._normalize_felzenszwalb_values(
+            scale=dataset.get("felzenszwalb_scale"),
+            sigma=dataset.get("felzenszwalb_sigma"),
+            min_size=dataset.get("felzenszwalb_min_size"),
+        )
+        texture_settings = self._normalize_texture_settings(dataset, algorithm=algorithm)
         default_values = {
+            "algorithm": algorithm,
             "n_segments": n_segments,
             "compactness": compactness,
             "sigma": sigma,
             "colorspace": colorspace,
+            "quickshift_ratio": quickshift_ratio,
+            "quickshift_kernel_size": quickshift_kernel_size,
+            "quickshift_max_dist": quickshift_max_dist,
+            "quickshift_sigma": quickshift_sigma,
+            "felzenszwalb_scale": felzenszwalb_scale,
+            "felzenszwalb_sigma": felzenszwalb_sigma,
+            "felzenszwalb_min_size": felzenszwalb_min_size,
+            **texture_settings,
         }
         override = storage.get_image_slic_override(int(dataset["id"]), image_name)
         if not isinstance(override, dict):
             return default_values
+        override_algorithm = self._normalize_slic_algorithm(
+            override.get("slic_algorithm"),
+            fallback=algorithm,
+        )
         override_segments, override_compactness, override_sigma, override_colorspace = self._normalize_slic_values(
             n_segments=override.get("n_segments"),
             compactness=override.get("compactness"),
             sigma=override.get("sigma"),
             colorspace=override.get("colorspace"),
         )
+        (
+            override_quickshift_ratio,
+            override_quickshift_kernel_size,
+            override_quickshift_max_dist,
+            override_quickshift_sigma,
+        ) = self._normalize_quickshift_values(
+            ratio=override.get("quickshift_ratio", default_values["quickshift_ratio"]),
+            kernel_size=override.get("quickshift_kernel_size", default_values["quickshift_kernel_size"]),
+            max_dist=override.get("quickshift_max_dist", default_values["quickshift_max_dist"]),
+            sigma=override.get("quickshift_sigma", default_values["quickshift_sigma"]),
+        )
+        (
+            override_felzenszwalb_scale,
+            override_felzenszwalb_sigma,
+            override_felzenszwalb_min_size,
+        ) = self._normalize_felzenszwalb_values(
+            scale=override.get("felzenszwalb_scale", default_values["felzenszwalb_scale"]),
+            sigma=override.get("felzenszwalb_sigma", default_values["felzenszwalb_sigma"]),
+            min_size=override.get("felzenszwalb_min_size", default_values["felzenszwalb_min_size"]),
+        )
+        texture_settings = self._normalize_texture_settings(
+            override,
+            fallback=default_values,
+            algorithm=override_algorithm,
+        )
         return {
+            "algorithm": override_algorithm,
             "n_segments": override_segments,
             "compactness": override_compactness,
             "sigma": override_sigma,
             "colorspace": override_colorspace,
+            "quickshift_ratio": override_quickshift_ratio,
+            "quickshift_kernel_size": override_quickshift_kernel_size,
+            "quickshift_max_dist": override_quickshift_max_dist,
+            "quickshift_sigma": override_quickshift_sigma,
+            "felzenszwalb_scale": override_felzenszwalb_scale,
+            "felzenszwalb_sigma": override_felzenszwalb_sigma,
+            "felzenszwalb_min_size": override_felzenszwalb_min_size,
+            **texture_settings,
         }
 
     def _run_slic_warmup_job(self, *, storage: Storage, job: dict[str, Any], worker_id: str) -> None:
@@ -617,10 +975,36 @@ class JobQueueManager:
                 load_or_create_slic_cache(
                     image_path,
                     cache_dir,
+                    algorithm=str(slic_settings["algorithm"]),
                     n_segments=int(slic_settings["n_segments"]),
                     compactness=float(slic_settings["compactness"]),
                     sigma=float(slic_settings["sigma"]),
                     colorspace=str(slic_settings["colorspace"]),
+                    quickshift_ratio=float(slic_settings["quickshift_ratio"]),
+                    quickshift_kernel_size=int(slic_settings["quickshift_kernel_size"]),
+                    quickshift_max_dist=float(slic_settings["quickshift_max_dist"]),
+                    quickshift_sigma=float(slic_settings["quickshift_sigma"]),
+                    felzenszwalb_scale=float(slic_settings["felzenszwalb_scale"]),
+                    felzenszwalb_sigma=float(slic_settings["felzenszwalb_sigma"]),
+                    felzenszwalb_min_size=int(slic_settings["felzenszwalb_min_size"]),
+                    texture_enabled=bool(slic_settings["texture_enabled"]),
+                    texture_mode=str(slic_settings["texture_mode"]),
+                    texture_lbp_enabled=bool(slic_settings["texture_lbp_enabled"]),
+                    texture_lbp_points=int(slic_settings["texture_lbp_points"]),
+                    texture_lbp_radii=list(slic_settings["texture_lbp_radii"]),
+                    texture_lbp_method=str(slic_settings["texture_lbp_method"]),
+                    texture_lbp_normalize=bool(slic_settings["texture_lbp_normalize"]),
+                    texture_gabor_enabled=bool(slic_settings["texture_gabor_enabled"]),
+                    texture_gabor_frequencies=list(slic_settings["texture_gabor_frequencies"]),
+                    texture_gabor_thetas=list(slic_settings["texture_gabor_thetas"]),
+                    texture_gabor_bandwidth=float(slic_settings["texture_gabor_bandwidth"]),
+                    texture_gabor_include_real=bool(slic_settings["texture_gabor_include_real"]),
+                    texture_gabor_include_imag=bool(slic_settings["texture_gabor_include_imag"]),
+                    texture_gabor_include_magnitude=bool(slic_settings["texture_gabor_include_magnitude"]),
+                    texture_gabor_normalize=bool(slic_settings["texture_gabor_normalize"]),
+                    texture_weight_color=float(slic_settings["texture_weight_color"]),
+                    texture_weight_lbp=float(slic_settings["texture_weight_lbp"]),
+                    texture_weight_gabor=float(slic_settings["texture_weight_gabor"]),
                 )
             except Exception as exc:
                 warnings += 1
