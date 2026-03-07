@@ -565,7 +565,7 @@ th.is-sorted-desc::after {
 
 .dataset-draft-grid .collection-thumb-card {
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto auto auto;
 }
 
 .draft-select-control,
@@ -2701,11 +2701,20 @@ pre {
   align-items: start;
 }
 
+.labeler-layout > * {
+  min-width: 0;
+}
+
 .labeler-tools-card {
   position: sticky;
   top: 10px;
   display: grid;
   gap: 10px;
+  min-width: 0;
+}
+
+.labeler-tools-card button {
+  margin-right: 0;
 }
 
 .labeler-tools-card p {
@@ -2717,7 +2726,23 @@ pre {
 }
 
 .labeler-image-name code {
+  display: block;
+  max-width: 100%;
   font-size: 14px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.labeler-tools-card .checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.labeler-tools-card .checkbox input {
+  margin-top: 2px;
+  width: auto;
+  flex: 0 0 auto;
 }
 
 .labeler-nav-row {

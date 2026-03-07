@@ -47,6 +47,7 @@ from .services.labeling.class_schema import normalize_class_schema, parse_class_
 from .services.labeling.coco_export import export_coco_annotations
 from .services.labeling.image_io import (
     ensure_dir,
+    frozen_mask_filename_for_class_id,
     list_images,
     load_image_size,
     mask_filename_for_class_id,
@@ -760,20 +761,22 @@ def _seed_masks_from_coco_annotations(
     images_dir: Path,
     masks_dir: Path,
     parsed_categories: list[dict[str, Any]],
-) -> tuple[int, list[str]]:
+    seed_frozen_masks: bool = False,
+) -> tuple[int, int, list[str]]:
     image_rows = list(coco_payload.get("images", []))
     if not image_rows or not parsed_categories:
-        return 0, []
+        return 0, 0, []
 
     class_names: list[str] = [str(item.get("name", "")).strip() for item in parsed_categories]
     if not any(class_names):
-        return 0, []
+        return 0, 0, []
     class_names = [name if name else f"class_{idx + 1}" for idx, name in enumerate(class_names)]
 
     category_to_class = category_id_to_class_index(parsed_categories)
     annotations_map = annotations_by_image(coco_payload)
     warnings: list[str] = []
     saved_masks = 0
+    saved_frozen_masks = 0
 
     for image_row in image_rows:
         try:
@@ -819,8 +822,12 @@ def _seed_masks_from_coco_annotations(
             output_path = masks_dir / mask_filename_for_class_id(stem, class_index)
             save_binary_mask(mask_bool, output_path)
             saved_masks += 1
+            if seed_frozen_masks:
+                frozen_path = masks_dir / frozen_mask_filename_for_class_id(stem, class_index)
+                save_binary_mask(mask_bool, frozen_path)
+                saved_frozen_masks += 1
 
-    return saved_masks, warnings
+    return saved_masks, saved_frozen_masks, warnings
 
 
 def _is_truthy(value: Any) -> bool:
@@ -2168,7 +2175,9 @@ def augment_new(workspace_id: int | None = None) -> str:
     draft_dataset_id: int | None = None
     draft_project: dict[str, Any] | None = None
     seeded_mask_files = 0
+    seeded_frozen_mask_files = 0
     seed_warnings: list[str] = []
+    freeze_seed_masks = _is_truthy(request.form.get("freeze_seed_masks"))
     try:
         augmented_coco = load_coco(Path(result.coco_json_path))
         parsed_categories = parse_categories(augmented_coco)
@@ -2188,11 +2197,12 @@ def augment_new(workspace_id: int | None = None) -> str:
         source_annotations_copy = draft_coco_dir / "source_augmented_annotations.json"
         shutil.copy2(Path(result.coco_json_path).resolve(), source_annotations_copy)
 
-        seeded_mask_files, seed_warnings = _seed_masks_from_coco_annotations(
+        seeded_mask_files, seeded_frozen_mask_files, seed_warnings = _seed_masks_from_coco_annotations(
             coco_payload=augmented_coco,
             images_dir=draft_images_dir,
             masks_dir=draft_masks_dir,
             parsed_categories=parsed_categories,
+            seed_frozen_masks=freeze_seed_masks,
         )
 
         draft_dataset_id = storage.create_workspace_dataset(
@@ -2244,6 +2254,8 @@ def augment_new(workspace_id: int | None = None) -> str:
         logs=logs,
         draft_dataset=draft_project,
         seeded_mask_files=seeded_mask_files,
+        seeded_frozen_mask_files=seeded_frozen_mask_files,
+        freeze_seed_masks=freeze_seed_masks,
         seed_warnings=seed_warnings,
     )
 

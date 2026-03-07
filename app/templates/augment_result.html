@@ -12,6 +12,8 @@
       <tr><th>Image Count</th><td>{{ result.image_count }}</td></tr>
       <tr><th>Annotation Count</th><td>{{ result.annotation_count }}</td></tr>
       <tr><th>Seeded Mask Files</th><td>{{ seeded_mask_files }}</td></tr>
+      <tr><th>Frozen Seed Mask Files</th><td>{{ seeded_frozen_mask_files }}</td></tr>
+      <tr><th>Freeze Seed Option</th><td>{{ "Enabled" if freeze_seed_masks else "Disabled" }}</td></tr>
       {% if draft_dataset %}
         <tr>
           <th>Draft Dataset</th>

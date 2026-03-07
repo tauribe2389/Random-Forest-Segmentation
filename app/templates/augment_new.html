@@ -43,6 +43,12 @@
         <input type="number" name="min_area" min="1" value="{{ request.form.get('min_area', '1') }}">
       </label>
 
+      <label class="inline-option-row">
+        <input type="checkbox" name="freeze_seed_masks" {% if request.method != 'POST' or request.form.get('freeze_seed_masks') %}checked{% endif %}>
+        Seed augmented masks as frozen masks
+      </label>
+      <p class="muted">When enabled, seeded masks are also saved as frozen seed masks so superpixel recompute defaults to preserving them.</p>
+
       <section class="augment-recipe-panel" aria-labelledby="recipe-heading">
         <div class="augment-recipe-head">
           <h3 id="recipe-heading">Recipe Steps</h3>
