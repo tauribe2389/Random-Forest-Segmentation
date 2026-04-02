@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Models - {{ workspace.name }}{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h1>Model Definitions</h1>
+        <p class="muted">Model definitions bind a workspace-level model identity to a model family and config. Training runs populate trained artifact metadata on these definitions.</p>
+      </div>
+    </div>
+    {% if models %}
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Family</th>
+            <th>Config Preview</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for model in models %}
+            <tr>
+              <td>{{ model.id }}</td>
+              <td><a href="{{ url_for('v2.model_detail', model_definition_id=model.id) }}">{{ model.name }}</a></td>
+              <td><code>{{ model.family_id }}</code></td>
+              <td>
+                {% if model_previews.get(model.id) %}
+                  <ul class="small-list">
+                    {% for key, value in model_previews.get(model.id) %}
+                      <li><strong>{{ key }}:</strong> {{ value }}</li>
+                    {% endfor %}
+                  </ul>
+                {% else %}
+                  <span class="table-note">No config values yet.</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="empty-state">No model definitions yet.</div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h2>Create Model Definition</h2>
+        <p class="muted">Choose a model family. You can refine the config on the detail page after creation.</p>
+      </div>
+    </div>
+    <form method="post" action="{{ url_for('v2.create_model_definition', workspace_id=workspace.id) }}" data-pending-text="Creating model...">
+      <label>Name</label>
+      <input type="text" name="name" required>
+      <label>Family</label>
+      <select name="family_id">
+        {% for family_id in model_family_ids %}
+          <option value="{{ family_id }}">{{ family_id }}</option>
+        {% endfor %}
+      </select>
+      <div class="form-actions">
+        <button type="submit">Create model definition</button>
+      </div>
+    </form>
+  </section>
+{% endblock %}

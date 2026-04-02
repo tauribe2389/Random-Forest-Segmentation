@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}{{ model_definition.name }} - {{ app_name }}{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h1>{{ model_definition.name }}</h1>
+        <p class="muted">Model family <code>{{ model_definition.family_id }}</code></p>
+      </div>
+      <span class="badge info">Model {{ model_definition.id }}</span>
+    </div>
+    <div class="grid-2">
+      <div class="toolbar-note">
+        <strong>Created</strong><br>
+        {{ model_definition.created_at }}
+      </div>
+      <div class="toolbar-note">
+        <strong>Latest Training Run</strong><br>
+        {% if latest_training_run %}
+          <a href="{{ url_for('v2.training_run_detail', training_run_id=latest_training_run.id) }}">Run {{ latest_training_run.id }}</a>
+          ({{ latest_training_run.status }})
+        {% else %}
+          None yet.
+        {% endif %}
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h2>Config</h2>
+        <p class="muted">Edit the model-family config directly as JSON. This is intentionally explicit for v2 while the higher-level config UI is still forming.</p>
+      </div>
+    </div>
+    <form method="post" action="{{ url_for('v2.update_model_definition_config', model_definition_id=model_definition.id) }}" data-pending-text="Saving config...">
+      <label>Config JSON</label>
+      <textarea name="config_json" rows="18">{{ model_config_json }}</textarea>
+      <div class="form-actions">
+        <button type="submit">Save config</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h2>Current Values</h2>
+        <p class="muted">Resolved config keys currently stored on the model definition.</p>
+      </div>
+    </div>
+    {% if model_config %}
+      <pre class="json-block">{{ model_config_json }}</pre>
+    {% else %}
+      <div class="empty-state">No config values stored yet.</div>
+    {% endif %}
+  </section>
+{% endblock %}

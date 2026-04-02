@@ -4,7 +4,6 @@
 <section class="panel workspace-summary-card">
   <div class="workspace-summary-head">
     <h2>{{ workspace.name }}</h2>
-    <button type="button" id="open-workspace-modal">New Workspace</button>
   </div>
   <div class="workspace-stats-grid">
     <article class="workspace-stat">
@@ -56,7 +55,7 @@
               <td><a href="{{ url_for('main.model_details', workspace_id=workspace.id, model_id=model.id) }}">{{ model.name }}</a></td>
               <td>{{ model.dataset_name }}</td>
               <td>{{ model.status }}</td>
-              <td>{{ model.created_at }}</td>
+              <td><time datetime="{{ model.created_at }}" title="{{ model.created_at }}">{{ model.created_at|human_datetime }}</time></td>
             </tr>
           {% endfor %}
         </tbody>
@@ -82,7 +81,7 @@
               <td>{{ run.model_name }}</td>
               <td>{{ run.num_images }}</td>
               <td>{{ run.status }}</td>
-              <td>{{ run.created_at }}</td>
+              <td><time datetime="{{ run.created_at }}" title="{{ run.created_at }}">{{ run.created_at|human_datetime }}</time></td>
             </tr>
           {% endfor %}
         </tbody>
@@ -90,68 +89,4 @@
     {% endif %}
   </section>
 {% endif %}
-
-<section id="workspace-modal" class="modal-backdrop" hidden aria-hidden="true">
-  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="workspace-modal-title">
-    <div class="modal-head">
-      <h3 id="workspace-modal-title">Create Workspace</h3>
-      <button id="close-workspace-modal" type="button" class="secondary">Close</button>
-    </div>
-    <form action="{{ url_for('labeler.create_workspace') }}" method="post" class="grid-form" enctype="multipart/form-data">
-      <input type="hidden" name="return_to" value="dashboard">
-      <label>
-        Workspace Name
-        <input type="text" name="name" required placeholder="experiment_workspace_a">
-      </label>
-      <label>
-        Upload Initial Images (optional)
-        <input type="file" name="image_files" accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff" multiple>
-      </label>
-      <div class="form-actions">
-        <button type="submit">Create Workspace</button>
-        <button id="cancel-workspace-modal" type="button" class="secondary">Cancel</button>
-      </div>
-    </form>
-  </div>
-</section>
-
-<script>
-  (function () {
-    var openBtn = document.getElementById("open-workspace-modal");
-    var closeBtn = document.getElementById("close-workspace-modal");
-    var cancelBtn = document.getElementById("cancel-workspace-modal");
-    var modal = document.getElementById("workspace-modal");
-    if (!openBtn || !closeBtn || !cancelBtn || !modal) {
-      return;
-    }
-
-    function openModal() {
-      modal.hidden = false;
-      modal.setAttribute("aria-hidden", "false");
-      var firstInput = modal.querySelector("input[name='name']");
-      if (firstInput) {
-        firstInput.focus();
-      }
-    }
-
-    function closeModal() {
-      modal.hidden = true;
-      modal.setAttribute("aria-hidden", "true");
-    }
-
-    openBtn.addEventListener("click", openModal);
-    closeBtn.addEventListener("click", closeModal);
-    cancelBtn.addEventListener("click", closeModal);
-    modal.addEventListener("click", function (event) {
-      if (event.target === modal) {
-        closeModal();
-      }
-    });
-    document.addEventListener("keydown", function (event) {
-      if (event.key === "Escape" && !modal.hidden) {
-        closeModal();
-      }
-    });
-  })();
-</script>
 {% endblock %}

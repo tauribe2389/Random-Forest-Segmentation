@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Workspaces - {{ app_name }}{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h1>Workspaces</h1>
+        <p class="muted">Choose an existing workspace or create a new one to start a new segmentation flow.</p>
+      </div>
+    </div>
+
+    {% if workspaces %}
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Description</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for workspace in workspaces %}
+            <tr>
+              <td>{{ workspace.id }}</td>
+              <td><a href="{{ url_for('v2.workspace_detail', workspace_id=workspace.id) }}">{{ workspace.name }}</a></td>
+              <td>{{ workspace.description or "-" }}</td>
+              <td>{{ workspace.created_at }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="empty-state">
+        <strong>No workspaces yet.</strong>
+        <p class="muted">Create the first workspace below.</p>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h2>Create Workspace</h2>
+        <p class="muted">Workspaces are the top-level home for source images, draft datasets, snapshots, models, and analysis runs.</p>
+      </div>
+    </div>
+    <form method="post" action="{{ url_for('v2.create_workspace') }}" data-pending-text="Creating workspace...">
+      <label>Name</label>
+      <input type="text" name="name" required>
+      <label>Description</label>
+      <textarea name="description" rows="3"></textarea>
+      <div class="form-actions">
+        <button type="submit">Create workspace</button>
+      </div>
+    </form>
+  </section>
+{% endblock %}

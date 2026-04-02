@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block title %}{{ workspace.name }} - {{ app_name }}{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h1>{{ workspace.name }}</h1>
+        <p class="muted">{{ workspace.description or "No description provided." }}</p>
+      </div>
+      <span class="badge info">Workspace {{ workspace.id }}</span>
+    </div>
+    <div class="card-row">
+      <article class="stat-card">
+        <span class="stat-label">Images</span>
+        <strong>{{ summary.images }}</strong>
+      </article>
+      <article class="stat-card">
+        <span class="stat-label">Draft Datasets</span>
+        <strong>{{ summary.datasets }}</strong>
+      </article>
+      <article class="stat-card">
+        <span class="stat-label">Registered Snapshots</span>
+        <strong>{{ summary.snapshots }}</strong>
+      </article>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h2>Next Steps</h2>
+        <p class="muted">Use the workspace rail at left to move between images, datasets, snapshots, models, and analysis.</p>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="toolbar-note">
+        <strong>Label preservation</strong><br>
+        Canonical truth lives in annotation revisions. Snapshot registration and analysis outputs remain separate from editable truth.
+      </div>
+      <div class="toolbar-note">
+        <strong>Model workflow</strong><br>
+        Build snapshots first, then train or predict from immutable snapshot identities.
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <h2>Recent Images</h2>
+      <a class="button-link secondary" href="{{ url_for('v2.workspace_images_page', workspace_id=workspace.id) }}">Open Images</a>
+    </div>
+    {% if recent_images %}
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Path</th>
+            <th>Dimensions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for image in recent_images %}
+            <tr>
+              <td>{{ image.id }}</td>
+              <td><code class="mono-wrap">{{ image.source_path }}</code></td>
+              <td>{{ image.width }} x {{ image.height }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="empty-state">No source images registered yet.</div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <h2>Recent Draft Datasets</h2>
+      <a class="button-link secondary" href="{{ url_for('v2.workspace_datasets_page', workspace_id=workspace.id) }}">Open Draft Datasets</a>
+    </div>
+    {% if recent_datasets %}
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Schema Version</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for dataset in recent_datasets %}
+            <tr>
+              <td>{{ dataset.id }}</td>
+              <td><a href="{{ url_for('v2.dataset_detail', dataset_id=dataset.id) }}">{{ dataset.name }}</a></td>
+              <td>{{ dataset.schema_version }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="empty-state">No draft datasets yet.</div>
+    {% endif %}
+  </section>
+
+  <section class="grid-2">
+    <div class="card">
+      <div class="section-head">
+        <h2>Recent Models</h2>
+        <a class="button-link secondary" href="{{ url_for('v2.workspace_models_page', workspace_id=workspace.id) }}">Open Models</a>
+      </div>
+      {% if recent_models %}
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Family</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for model in recent_models %}
+              <tr>
+                <td>{{ model.id }}</td>
+                <td><a href="{{ url_for('v2.model_detail', model_definition_id=model.id) }}">{{ model.name }}</a></td>
+                <td><code>{{ model.family_id }}</code></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="empty-state">No model definitions yet.</div>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <div class="section-head">
+        <h2>Recent Snapshots</h2>
+        <a class="button-link secondary" href="{{ url_for('v2.workspace_snapshots_page', workspace_id=workspace.id) }}">Open Snapshots</a>
+      </div>
+      {% if recent_snapshots %}
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Images</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in recent_snapshots %}
+              <tr>
+                <td>{{ row.snapshot.id }}</td>
+                <td><a href="{{ url_for('v2.snapshot_detail', snapshot_id=row.snapshot.id) }}">{{ row.snapshot.name }}</a></td>
+                <td>{{ row.snapshot.image_count }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="empty-state">No registered snapshots yet.</div>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <h2>Recent Prediction Runs</h2>
+      <a class="button-link secondary" href="{{ url_for('v2.workspace_analysis_page', workspace_id=workspace.id) }}">Open Analysis</a>
+    </div>
+    {% if recent_predictions %}
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Model</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in recent_predictions %}
+            <tr>
+              <td><a href="{{ url_for('v2.prediction_run_detail', prediction_run_id=row.run.id) }}">{{ row.run.id }}</a></td>
+              <td>{{ row.model.name if row.model else row.run.model_definition_id }}</td>
+              <td><span class="status-pill {{ row.run.status|lower }}">{{ row.run.status }}</span></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="empty-state">No prediction runs yet.</div>
+    {% endif %}
+  </section>
+{% endblock %}

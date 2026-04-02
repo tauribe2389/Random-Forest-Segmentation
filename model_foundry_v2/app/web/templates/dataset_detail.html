@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}{{ dataset.name }} - {{ app_name }}{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h1>{{ dataset.name }}</h1>
+        <p class="muted">{{ dataset.description or "No description provided." }}</p>
+      </div>
+      <div class="inline-actions">
+        <span class="badge info">Dataset {{ dataset.id }}</span>
+        <span class="badge {% if snapshots %}success{% else %}warning{% endif %}">
+          {{ snapshots|length }} snapshot{{ "" if snapshots|length == 1 else "s" }}
+        </span>
+      </div>
+    </div>
+    <div class="toolbar-note">
+      Draft datasets are mutable. Register a snapshot when you want to freeze the current annotation heads into an immutable dataset identity.
+    </div>
+  </section>
+
+  <section class="grid-2">
+    <div class="card">
+      <div class="section-head">
+        <div>
+          <h2>Classes</h2>
+          <p class="muted">The class schema applies to future snapshots from this draft dataset.</p>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Class Index</th>
+            <th>Name</th>
+            <th>Color</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for dataset_class in classes %}
+            <tr>
+              <td>{{ dataset_class.class_index }}</td>
+              <td>{{ dataset_class.name }}</td>
+              <td><code>{{ dataset_class.color }}</code></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <form method="post" action="{{ url_for('v2.add_dataset_class', dataset_id=dataset.id) }}" data-pending-text="Adding class...">
+        <label>Name</label>
+        <input type="text" name="name" required>
+        <label>Color</label>
+        <input type="text" name="color" value="#ff0000" required>
+        <div class="form-actions">
+          <button type="submit">Add class</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="section-head">
+        <div>
+          <h2>Register Snapshot</h2>
+          <p class="muted">Snapshot registration locks the current annotation heads referenced by this draft.</p>
+        </div>
+      </div>
+      <form method="post" action="{{ url_for('v2.register_snapshot', dataset_id=dataset.id) }}" data-pending-text="Registering snapshot...">
+        <label>Snapshot name</label>
+        <input type="text" name="name" placeholder="{{ dataset.name }} snapshot">
+        <div class="form-actions">
+          <button type="submit">Register immutable snapshot</button>
+        </div>
+      </form>
+      {% if snapshots %}
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Schema Version</th>
+              <th>Images</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for snapshot in snapshots %}
+              <tr>
+                <td>{{ snapshot.id }}</td>
+                <td><a href="{{ url_for('v2.snapshot_detail', snapshot_id=snapshot.id) }}">{{ snapshot.name }}</a></td>
+                <td>{{ snapshot.class_schema_version }}</td>
+                <td>{{ snapshot.image_count }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="muted">No registered snapshots yet.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h2>Images And Annotation Heads</h2>
+        <p class="muted">Canonical truth is stored in annotation revisions. Locked heads must be forked before they can be edited again.</p>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Image ID</th>
+          <th>Path</th>
+          <th>Head Revision</th>
+          <th>Revision Checksum</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in image_rows %}
+          <tr>
+            <td>{{ row.image.id }}</td>
+            <td><code class="mono-wrap">{{ row.image.source_path }}</code></td>
+            <td>
+              {% if row.head_revision %}
+                {{ row.head_revision.id }}
+                {% if row.head_revision.is_locked %}
+                  <span class="badge warning">Locked</span>
+                {% else %}
+                  <span class="badge success">Editable</span>
+                {% endif %}
+              {% else %}
+                <span class="badge">Not initialized</span>
+              {% endif %}
+            </td>
+            <td><code class="mono-wrap">{{ row.head_revision.revision_checksum if row.head_revision else "-" }}</code></td>
+            <td>
+              <div class="inline-actions">
+                {% if not row.head_revision %}
+                  <form method="post" action="{{ url_for('v2.initialize_revision', dataset_id=dataset.id, image_id=row.image.id) }}" data-pending-text="Initializing...">
+                    <button type="submit">Init head</button>
+                  </form>
+                {% else %}
+                  <a class="button-link secondary" href="{{ url_for('v2.annotation_detail', dataset_id=dataset.id, image_id=row.image.id) }}">View annotation</a>
+                  {% if row.head_revision.is_locked %}
+                    <form method="post" action="{{ url_for('v2.fork_head_revision', dataset_id=dataset.id, image_id=row.image.id) }}" data-pending-text="Forking head...">
+                      <button type="submit">Fork head</button>
+                    </form>
+                  {% endif %}
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

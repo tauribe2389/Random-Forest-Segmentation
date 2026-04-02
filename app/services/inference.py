@@ -124,6 +124,11 @@ def _save_mask(mask: np.ndarray, path: Path) -> None:
         Image.fromarray(mask.astype(np.uint16), mode="I;16").save(path)
 
 
+def _save_mask_csv(mask: np.ndarray, path: Path) -> None:
+    # Preserve the class-index grid at original image resolution for downstream tooling.
+    np.savetxt(path, mask.astype(np.int32, copy=False), fmt="%d", delimiter=",")
+
+
 def _save_confidence(confidence: np.ndarray, path: Path) -> None:
     encoded = np.clip(np.rint(confidence * 255.0), 0.0, 255.0).astype(np.uint8)
     Image.fromarray(encoded, mode="L").save(path)
@@ -320,12 +325,16 @@ def run_analysis(
         base_name = f"{image_idx:03d}_{_slugify(image_path.stem)}"
         raw_mask_path = run_dir / f"{base_name}_raw_mask.png"
         pred_mask_path = run_dir / f"{base_name}__pred.png"
+        raw_mask_csv_path = run_dir / f"{base_name}_raw_mask.csv"
+        pred_csv_path = run_dir / f"{base_name}__pred.csv"
         conf_path = run_dir / f"{base_name}__conf.png"
         output_meta_path = run_dir / f"{base_name}__meta.json"
         raw_overlay_path = run_dir / f"{base_name}_raw_overlay.png"
 
         _save_mask(label_raw, raw_mask_path)
         _save_mask(label_raw, pred_mask_path)
+        _save_mask_csv(label_raw, raw_mask_csv_path)
+        _save_mask_csv(label_raw, pred_csv_path)
         _save_confidence(conf_raw, conf_path)
         _save_overlay(image, label_raw, palette, raw_overlay_path)
 
@@ -333,6 +342,7 @@ def run_analysis(
         label_refined = label_raw
         label_refined_pos = label_raw_pos
         refined_mask_path: Path | None = None
+        refined_mask_csv_path: Path | None = None
         refined_overlay_path: Path | None = None
         refined_debug: dict[str, Any] | None = None
         if smoothing_enabled:
@@ -345,8 +355,10 @@ def run_analysis(
             )
             label_refined = class_values[label_refined_pos]
             refined_mask_path = run_dir / f"{base_name}_refined_mask.png"
+            refined_mask_csv_path = run_dir / f"{base_name}_refined_mask.csv"
             refined_overlay_path = run_dir / f"{base_name}_refined_overlay.png"
             _save_mask(label_refined, refined_mask_path)
+            _save_mask_csv(label_refined, refined_mask_csv_path)
             _save_overlay(image, label_refined, palette, refined_overlay_path)
 
             # Keep arrays referenced for easier debugging in run summary.
@@ -385,9 +397,16 @@ def run_analysis(
 
         raw_mask_rel = _safe_relative(raw_mask_path, base_dir)
         pred_mask_rel = _safe_relative(pred_mask_path, base_dir)
+        raw_mask_csv_rel = _safe_relative(raw_mask_csv_path, base_dir)
+        pred_csv_rel = _safe_relative(pred_csv_path, base_dir)
         conf_rel = _safe_relative(conf_path, base_dir)
         raw_overlay_rel = _safe_relative(raw_overlay_path, base_dir)
         refined_mask_rel = _safe_relative(refined_mask_path, base_dir) if refined_mask_path is not None else None
+        refined_mask_csv_rel = (
+            _safe_relative(refined_mask_csv_path, base_dir)
+            if refined_mask_csv_path is not None
+            else None
+        )
         refined_overlay_rel = (
             _safe_relative(refined_overlay_path, base_dir)
             if refined_overlay_path is not None
@@ -406,13 +425,17 @@ def run_analysis(
             "prediction_artifacts": {
                 "raw_mask_path": raw_mask_rel,
                 "pred_path": pred_mask_rel,
+                "raw_mask_csv_path": raw_mask_csv_rel,
+                "pred_csv_path": pred_csv_rel,
                 "conf_path": conf_rel,
                 "raw_overlay_path": raw_overlay_rel,
                 "refined_mask_path": refined_mask_rel,
+                "refined_mask_csv_path": refined_mask_csv_rel,
                 "refined_overlay_path": refined_overlay_rel,
             },
             "encoding": {
                 "pred_png": "class index map stored as uint8 or uint16",
+                "pred_csv": "comma-separated class index grid at original image resolution",
                 "conf_png": "uint8 where value == round(max_probability * 255)",
             },
             "transform": {

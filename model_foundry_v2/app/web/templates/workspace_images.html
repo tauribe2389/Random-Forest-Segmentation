@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Images - {{ workspace.name }}{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h1>Source Images</h1>
+        <p class="muted">Source images are the immutable library for this workspace. Labeling happens only inside draft datasets.</p>
+      </div>
+    </div>
+    {% if images %}
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Path</th>
+            <th>Dimensions</th>
+            <th>Checksum</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for image in images %}
+            <tr>
+              <td>{{ image.id }}</td>
+              <td><code class="mono-wrap">{{ image.source_path }}</code></td>
+              <td>{{ image.width }} x {{ image.height }}</td>
+              <td><code class="mono-wrap">{{ image.checksum_sha256 }}</code></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="empty-state">No source images registered yet.</div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h2>Register Image Asset</h2>
+        <p class="muted">Add a file from disk into this workspace image library.</p>
+      </div>
+    </div>
+    <form method="post" action="{{ url_for('v2.register_image_asset', workspace_id=workspace.id) }}" data-pending-text="Registering image...">
+      <label>Absolute or relative image path</label>
+      <input type="text" name="source_path" required>
+      <div class="form-actions">
+        <button type="submit">Register image</button>
+      </div>
+    </form>
+  </section>
+{% endblock %}

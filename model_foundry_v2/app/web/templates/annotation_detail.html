@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+
+{% block title %}Annotation Revision {{ revision.id }} - {{ app_name }}{% endblock %}
+
+{% block content %}
+  <style>
+    .editor-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+    .class-button,
+    .tool-button {
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      padding: 0.45rem 0.75rem;
+      background: white;
+      color: #0f172a;
+    }
+    .class-button.is-active,
+    .tool-button.is-active {
+      border-color: #0f172a;
+      box-shadow: inset 0 0 0 2px #0f172a;
+    }
+    .editor-stage {
+      position: relative;
+      display: inline-block;
+      border: 1px solid #cbd5e1;
+      border-radius: 0.75rem;
+      overflow: hidden;
+      background: #0f172a;
+      max-width: 100%;
+    }
+    .editor-stage canvas {
+      display: block;
+      max-width: 100%;
+      height: auto;
+    }
+    #overlay-canvas {
+      position: absolute;
+      inset: 0;
+      cursor: crosshair;
+    }
+    .editor-sidebar {
+      display: grid;
+      gap: 0.75rem;
+    }
+    .editor-layout {
+      display: grid;
+      gap: 1rem;
+    }
+    @media (min-width: 980px) {
+      .editor-layout {
+        grid-template-columns: 1.4fr 0.8fr;
+        align-items: start;
+      }
+    }
+    .status-line {
+      font-size: 0.95rem;
+      color: #334155;
+    }
+    .hint {
+      color: #475569;
+      font-size: 0.95rem;
+    }
+  </style>
+
+  <div class="card">
+    <div class="section-head">
+      <div>
+        <h1>Annotation Revision {{ revision.id }}</h1>
+        <p class="muted">{{ dataset.name }} / image {{ image.id }}</p>
+      </div>
+      <div class="inline-actions">
+        {% if revision.is_locked %}
+          <span class="badge warning">Locked by snapshot</span>
+        {% else %}
+          <span class="badge success">Editable head</span>
+        {% endif %}
+      </div>
+    </div>
+    <p><strong>Dimensions:</strong> {{ revision.width }} x {{ revision.height }}</p>
+    <p><strong>Revision Checksum:</strong> <code>{{ revision.revision_checksum }}</code></p>
+    <p><strong>Class Schema Version:</strong> {{ dataset.schema_version }}</p>
+    <p><strong>Last Modified:</strong> {{ revision.updated_at }}</p>
+    {% if revision.is_locked %}
+      <p><strong>Status:</strong> Locked by a registered snapshot.</p>
+    {% else %}
+      <p><strong>Status:</strong> Editable head revision.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Phase 2 Minimal Editor</h2>
+    <div class="editor-layout">
+      <div>
+        <div class="editor-toolbar">
+          <div>
+            <strong>Classes</strong>
+            <div>
+              {% for dataset_class in classes %}
+                <button
+                  type="button"
+                  class="class-button{% if dataset_class.class_index == 1 %} is-active{% endif %}"
+                  data-class-index="{{ dataset_class.class_index }}"
+                  style="background: {{ dataset_class.color }}22;"
+                >
+                  {{ dataset_class.class_index }}: {{ dataset_class.name }}
+                </button>
+              {% endfor %}
+            </div>
+          </div>
+          <div>
+            <strong>Tool</strong>
+            <div>
+              <button type="button" class="tool-button is-active" data-tool="brush">Brush</button>
+              <button type="button" class="tool-button" data-tool="fill">Fill</button>
+            </div>
+          </div>
+          <div>
+            <label for="brush-radius"><strong>Brush radius</strong></label>
+            <input id="brush-radius" type="range" min="1" max="20" step="1" value="6">
+          </div>
+          <div>
+            <button type="button" id="reload-annotation">Reload</button>
+            <button type="button" id="save-annotation">Save</button>
+          </div>
+        </div>
+
+        <div class="editor-stage">
+          <img id="annotation-source-image" src="{{ image_url }}" alt="Source image" hidden>
+          <canvas id="source-canvas"></canvas>
+          <canvas id="overlay-canvas"></canvas>
+        </div>
+      </div>
+
+      <div class="editor-sidebar">
+        <div>
+          <h3>Editor Status</h3>
+          <p id="editor-status" class="status-line">Loading annotation…</p>
+          <p id="editor-selection" class="status-line">Current class: -</p>
+          <p id="revision-summary" class="status-line">Revision {{ revision.id }} | checksum {{ revision.revision_checksum }}</p>
+        </div>
+
+        {% if revision.is_locked %}
+          <div class="card" style="margin: 0;">
+            <h3>Locked Revision</h3>
+            <p class="hint">
+              This revision is locked because a registered snapshot references it. Fork a new head revision before editing.
+            </p>
+            <form method="post" action="{{ fork_url }}" data-pending-text="Forking head...">
+              <button type="submit">Fork editable head</button>
+            </form>
+          </div>
+        {% else %}
+          <div>
+            <h3>Editing Contract</h3>
+            <p class="hint">
+              Painting updates the canonical <code>label_map</code> directly. No superpixel cache is used to reconstruct truth.
+            </p>
+            <p class="hint">
+              Brush paints raster pixels. Fill replaces the connected region under the cursor that shares the current class value.
+            </p>
+          </div>
+        {% endif %}
+
+        <div>
+          <h3>Mask State Legend</h3>
+          <div class="legend">
+            <div class="legend-row">
+              <span class="legend-swatch truth"></span>
+              <div>
+                <strong>Truth</strong>
+                <div class="hint">Canonical user-edited label map stored in this annotation revision.</div>
+              </div>
+            </div>
+            <div class="legend-row">
+              <span class="legend-swatch protected"></span>
+              <div>
+                <strong>Protected</strong>
+                <div class="hint">Protection semantics live in the protection map and should block future batch overwrites.</div>
+              </div>
+            </div>
+            <div class="legend-row">
+              <span class="legend-swatch prediction"></span>
+              <div>
+                <strong>Prediction Seed</strong>
+                <div class="hint">Promoted predictions create new truth seeds, but they remain explicit promotion outputs.</div>
+              </div>
+            </div>
+            <div class="legend-row">
+              <span class="legend-swatch derived"></span>
+              <div>
+                <strong>Derived Aid</strong>
+                <div class="hint">Superpixels and other future editing aids are derived only and must not reconstruct truth.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <h3>API</h3>
+          <p><code>{{ api_url }}</code></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.annotationEditorConfig = {
+      apiUrl: {{ api_url|tojson }},
+      imageUrl: {{ image_url|tojson }},
+      locked: {{ revision.is_locked|tojson }},
+      forkUrl: {{ fork_url|tojson }},
+      classes: {{ classes|tojson }}
+    };
+  </script>
+  <script src="{{ url_for('v2.asset_file', filename='annotation_editor.js') }}"></script>
+{% endblock %}

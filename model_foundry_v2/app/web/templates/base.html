@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}{{ app_name }}{% endblock %}</title>
+    <link rel="icon" href="{{ url_for('v2.favicon') }}">
+    <link rel="stylesheet" href="{{ url_for('v2.asset_file', filename='style.css') }}">
+    {% block head %}{% endblock %}
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="header-brand">
+        <h1><a href="{{ url_for('v2.index') }}">{{ app_name }}</a></h1>
+        <p>Segmentation workspace for canonical labeling, snapshots, models, and analysis artifacts.</p>
+      </div>
+      <div class="header-controls">
+        {% if active_workspace and workspaces %}
+          <form method="post" action="{{ url_for('v2.switch_workspace') }}" class="workspace-switcher-form">
+            <input type="hidden" name="next_url" value="{{ request.path }}">
+            <label>
+              Workspace
+              <select name="workspace_id" onchange="this.form.submit()">
+                {% for workspace in workspaces %}
+                  <option value="{{ workspace.id }}" {% if workspace.id == active_workspace.id %}selected{% endif %}>
+                    {{ workspace.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </label>
+          </form>
+        {% endif %}
+        <nav class="top-links" aria-label="Global">
+          <a href="{{ url_for('v2.index') }}">Workspaces</a>
+          <a href="{{ url_for('v2.healthz') }}">Health</a>
+        </nav>
+      </div>
+    </header>
+
+    <div class="page-wrap">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="flash-stack">
+            {% for category, message in messages %}
+              <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      {% if active_workspace %}
+        <div class="app-shell">
+          <aside class="workspace-sidebar">
+            <h2>{{ active_workspace.name }}</h2>
+            <p>Workspace navigation</p>
+            <ul>
+              {% for item in sidebar_items %}
+                <li>
+                  <a href="{{ item.url }}" class="{% if active_section == item.key %}is-active{% endif %}">
+                    {{ item.label }}
+                  </a>
+                </li>
+              {% endfor %}
+            </ul>
+          </aside>
+
+          <main class="workspace-main">
+            {% if breadcrumbs %}
+              <nav class="page-breadcrumb" aria-label="Breadcrumb">
+                {% for crumb in breadcrumbs %}
+                  {% if crumb.url %}
+                    <a href="{{ crumb.url }}">{{ crumb.label }}</a>
+                  {% else %}
+                    <span>{{ crumb.label }}</span>
+                  {% endif %}
+                  {% if not loop.last %}
+                    <span class="crumb-sep">/</span>
+                  {% endif %}
+                {% endfor %}
+              </nav>
+            {% endif %}
+            <div class="content-grid">
+      {% else %}
+        <main class="shellless-main">
+          <div class="content-grid">
+      {% endif %}
+      {% block content %}{% endblock %}
+      {% if active_workspace %}
+            </div>
+          </main>
+        </div>
+      {% else %}
+          </div>
+        </main>
+      {% endif %}
+    </div>
+
+    <script>
+      (function () {
+        var forms = document.querySelectorAll("form[data-pending-text]");
+        forms.forEach(function (form) {
+          form.addEventListener("submit", function () {
+            var pendingText = form.getAttribute("data-pending-text") || "Working...";
+            var submitButtons = form.querySelectorAll("button[type='submit'], button:not([type])");
+            submitButtons.forEach(function (button, index) {
+              if (index === 0) {
+                button.dataset.originalLabel = button.textContent;
+                button.textContent = pendingText;
+              }
+              button.disabled = true;
+            });
+          });
+        });
+      }());
+    </script>
+    {% block scripts %}{% endblock %}
+  </body>
+</html>

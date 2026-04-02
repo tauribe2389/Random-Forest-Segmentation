@@ -16,6 +16,7 @@
   const slicDefault = config.slicDefault || {};
   let slicCurrent = config.slicCurrent || {};
   const slicDetailPresets = config.slicDetailPresets || {};
+  const simselectDefaults = config.simselectDefaults || {};
   const classes = Array.isArray(config.classes) ? config.classes : [];
   const classNameMap = config.classNameMap || {};
   let currentClassId = Number(config.defaultClassId);
@@ -31,6 +32,8 @@
   let marqueeRule = "centroid";
   let isDirty = false;
   let isSaving = false;
+  let simselectInputMode = "brush";
+  let simselectRoiMode = "paint";
 
   const selectedIds = new Set();
 
@@ -43,6 +46,9 @@
   const boundaryImage = document.getElementById("boundary-image");
   const maskImage = document.getElementById("mask-image");
   const selectionImage = document.getElementById("selection-image");
+  const simselectRoiCanvas = document.getElementById("simselect-roi-canvas");
+  const simselectPreviewImage = document.getElementById("simselect-preview-image");
+  const simselectSeedImage = document.getElementById("simselect-seed-image");
   const marqueeRect = document.getElementById("marquee-rect");
 
   const classSelect = document.getElementById("class-select");
@@ -113,6 +119,30 @@
   const selectionCountEl = document.getElementById("selection-count");
   const applySelectionBtn = document.getElementById("apply-selection-btn");
   const clearSelectionBtn = document.getElementById("clear-selection-btn");
+  const simselectPanel = document.getElementById("simselect-panel");
+  const simselectInputBrushBtn = document.getElementById("simselect-input-brush");
+  const simselectInputSeedBtn = document.getElementById("simselect-input-seed");
+  const simselectRoiPaintBtn = document.getElementById("simselect-roi-paint");
+  const simselectRoiEraseBtn = document.getElementById("simselect-roi-erase");
+  const simselectBrushSizeInput = document.getElementById("simselect-brush-size");
+  const simselectBrushSizeValue = document.getElementById("simselect-brush-size-value");
+  const simselectRoiCountEl = document.getElementById("simselect-roi-count");
+  const simselectMatchCountEl = document.getElementById("simselect-match-count");
+  const simselectSeedLabelEl = document.getElementById("simselect-seed-label");
+  const simselectColorEnabledInput = document.getElementById("simselect-color-enabled");
+  const simselectTextureEnabledInput = document.getElementById("simselect-texture-enabled");
+  const simselectColorThresholdInput = document.getElementById("simselect-color-threshold");
+  const simselectColorThresholdValue = document.getElementById("simselect-color-threshold-value");
+  const simselectTextureThresholdInput = document.getElementById("simselect-texture-threshold");
+  const simselectTextureThresholdValue = document.getElementById("simselect-texture-threshold-value");
+  const simselectLbpPointsInput = document.getElementById("simselect-lbp-points");
+  const simselectLbpRadiusInput = document.getElementById("simselect-lbp-radius");
+  const simselectLbpMethodSelect = document.getElementById("simselect-lbp-method");
+  const simselectPrepareBtn = document.getElementById("simselect-prepare-btn");
+  const simselectAddBtn = document.getElementById("simselect-add-btn");
+  const simselectSubtractBtn = document.getElementById("simselect-subtract-btn");
+  const simselectResetBtn = document.getElementById("simselect-reset-btn");
+  const simselectClearRoiBtn = document.getElementById("simselect-clear-roi-btn");
   const boundaryToggle = document.getElementById("toggle-boundary");
   const undoBtn = document.getElementById("undo-btn");
   const redoBtn = document.getElementById("redo-btn");
@@ -149,6 +179,16 @@
   let isMarqueeSelecting = false;
   let marqueeStartViewport = null;
   let isImageSwitching = false;
+  let isSimselectRoiPainting = false;
+  let simselectRoiStrokeMoved = false;
+  let simselectLastPoint = null;
+  let simselectQueryTimer = null;
+  let simselectQueryNonce = 0;
+  let simselectPreparePromise = null;
+  let simselectRoiMask = null;
+  let simselectRoiPixels = 0;
+  let simselectMatchedIds = [];
+  let simselectSeedId = null;
 
   let slicAlgorithm = String(slicCurrent.algorithm || "slic");
   let slicPresetMode = String(slicCurrent.preset_mode || "dataset_default");
@@ -157,6 +197,15 @@
     lbpRadii: [1],
     gaborFrequencies: [0.1, 0.2],
     gaborThetas: [0, 45, 90, 135],
+  };
+  const SIMSELECT_DEFAULTS = {
+    colorEnabled: coerceBoolean(simselectDefaults.color_enabled, true),
+    textureEnabled: coerceBoolean(simselectDefaults.texture_enabled, true),
+    colorThreshold: parseNumber(simselectDefaults.color_threshold, 18.0),
+    textureThreshold: parseNumber(simselectDefaults.texture_threshold, 0.35),
+    lbpPoints: Math.round(parseNumber(simselectDefaults.lbp_points, 8)),
+    lbpRadius: Math.round(parseNumber(simselectDefaults.lbp_radius, 1)),
+    lbpMethod: String(simselectDefaults.lbp_method || "uniform"),
   };
 
   function clamp(value, min, max) {
@@ -226,6 +275,7 @@
   function updateSelectionToolUI() {
     viewport.classList.toggle("tool-brush", selectionTool === "brush");
     viewport.classList.toggle("tool-marquee", selectionTool === "marquee");
+    viewport.classList.toggle("tool-similarity", selectionTool === "similarity");
     selectionToolButtons.forEach((button) => {
       const tool = String(button.dataset.tool || "");
       const isActive = tool === selectionTool;
@@ -235,10 +285,28 @@
     if (marqueeRuleWrap) {
       marqueeRuleWrap.style.display = selectionTool === "marquee" ? "block" : "none";
     }
+    if (simselectPanel) {
+      const showSimselect = selectionTool === "similarity";
+      simselectPanel.hidden = !showSimselect;
+      simselectPanel.style.display = showSimselect ? "grid" : "none";
+    }
+    if (selectionTool !== "similarity") {
+      isSimselectRoiPainting = false;
+      simselectLastPoint = null;
+      if (simselectQueryTimer) {
+        window.clearTimeout(simselectQueryTimer);
+        simselectQueryTimer = null;
+      }
+      simselectQueryNonce += 1;
+    }
+    setSimselectInputMode(simselectInputMode);
+    updateSimselectOverlayVisibility();
+    normalizeToolGridLayout();
   }
 
   function setSelectionTool(nextTool) {
-    selectionTool = nextTool === "brush" || nextTool === "marquee" ? nextTool : "single";
+    selectionTool =
+      nextTool === "brush" || nextTool === "marquee" || nextTool === "similarity" ? nextTool : "single";
     updateSelectionToolUI();
   }
 
@@ -257,6 +325,101 @@
     }
     selectionImage.src = `data:image/png;base64,${maskPngBase64}`;
     selectionImage.style.display = "block";
+  }
+
+  function setOverlayImage(imgEl, maskPngBase64) {
+    if (!imgEl) {
+      return;
+    }
+    if (!maskPngBase64) {
+      imgEl.style.display = "none";
+      imgEl.src = "";
+      return;
+    }
+    imgEl.src = `data:image/png;base64,${maskPngBase64}`;
+    imgEl.style.display = "block";
+  }
+
+  function setSimselectPreviewOverlay(maskPngBase64) {
+    setOverlayImage(simselectPreviewImage, maskPngBase64);
+    updateSimselectOverlayVisibility();
+  }
+
+  function setSimselectSeedOverlay(maskPngBase64) {
+    setOverlayImage(simselectSeedImage, maskPngBase64);
+    updateSimselectOverlayVisibility();
+  }
+
+  function updateSimselectStats() {
+    if (simselectRoiCountEl) {
+      simselectRoiCountEl.textContent = `ROI pixels: ${simselectRoiPixels}`;
+    }
+    if (simselectMatchCountEl) {
+      simselectMatchCountEl.textContent = `Matches: ${simselectMatchedIds.length}`;
+    }
+    if (simselectSeedLabelEl) {
+      const seedText =
+        simselectSeedId === null || simselectSeedId === undefined ? "none" : String(simselectSeedId);
+      simselectSeedLabelEl.textContent = `Seed superpixel: ${seedText}`;
+    }
+  }
+
+  function clearSimselectPreview(clearSeedOverlay) {
+    simselectMatchedIds = [];
+    setSimselectPreviewOverlay("");
+    if (clearSeedOverlay) {
+      setSimselectSeedOverlay("");
+    }
+    updateSimselectStats();
+  }
+
+  function normalizeToolGridLayout() {
+    const fullWidthGroups = [
+      ".labeler-mode-toggle",
+      ".labeler-tool-toggle",
+      ".labeler-selection-row",
+      ".labeler-action-grid",
+      ".simselect-row",
+      ".simselect-action-grid",
+    ];
+    fullWidthGroups.forEach((selector) => {
+      const groups = Array.from(document.querySelectorAll(selector));
+      groups.forEach((groupEl) => {
+        if (!(groupEl instanceof HTMLElement)) {
+          return;
+        }
+        groupEl.style.width = "100%";
+        const buttons = Array.from(groupEl.querySelectorAll("button"));
+        buttons.forEach((btn) => {
+          if (!(btn instanceof HTMLButtonElement)) {
+            return;
+          }
+          btn.style.width = "100%";
+          btn.style.minWidth = "0";
+          btn.style.maxWidth = "100%";
+          btn.style.marginRight = "0";
+        });
+      });
+    });
+  }
+
+  function updateSimselectOverlayVisibility() {
+    const showSimselect = selectionTool === "similarity";
+    if (simselectRoiCanvas) {
+      if (!showSimselect) {
+        simselectRoiCanvas.style.display = "none";
+      } else if (imageWidth > 0 && imageHeight > 0) {
+        simselectRoiCanvas.style.display = "block";
+      }
+    }
+    if (simselectPreviewImage) {
+      const hasPreview = Boolean(simselectPreviewImage.getAttribute("src"));
+      simselectPreviewImage.style.display = showSimselect && hasPreview ? "block" : "none";
+    }
+    if (simselectSeedImage) {
+      const hasSeed = Boolean(simselectSeedImage.getAttribute("src"));
+      simselectSeedImage.style.display = showSimselect && hasSeed ? "block" : "none";
+    }
   }
 
   function classNameForId(classId) {
@@ -812,6 +975,22 @@
     return added;
   }
 
+  function removeSelectedIds(ids) {
+    let removed = 0;
+    (ids || []).forEach((value) => {
+      const spId = Number(value);
+      if (!Number.isInteger(spId) || spId < 0) {
+        return;
+      }
+      if (selectedIds.has(spId)) {
+        selectedIds.delete(spId);
+        removed += 1;
+      }
+    });
+    updateSelectionCount();
+    return removed;
+  }
+
   async function refreshSelectionOverlay() {
     if (!selectionImage) {
       return;
@@ -836,6 +1015,409 @@
     selectedIds.clear();
     updateSelectionCount();
     setSelectionOverlay("");
+  }
+
+  function normalizeSimselectLbpMethod(value) {
+    const candidate = String(value || "").trim().toLowerCase();
+    if (candidate === "uniform" || candidate === "ror" || candidate === "default") {
+      return candidate;
+    }
+    return "uniform";
+  }
+
+  function simselectFeatureConfigPayload() {
+    const points = Math.round(parseNumber(simselectLbpPointsInput && simselectLbpPointsInput.value, SIMSELECT_DEFAULTS.lbpPoints));
+    const radius = Math.round(parseNumber(simselectLbpRadiusInput && simselectLbpRadiusInput.value, SIMSELECT_DEFAULTS.lbpRadius));
+    const method = normalizeSimselectLbpMethod(simselectLbpMethodSelect ? simselectLbpMethodSelect.value : SIMSELECT_DEFAULTS.lbpMethod);
+    if (simselectLbpPointsInput) {
+      simselectLbpPointsInput.value = String(clamp(points, 4, 64));
+    }
+    if (simselectLbpRadiusInput) {
+      simselectLbpRadiusInput.value = String(clamp(radius, 1, 16));
+    }
+    if (simselectLbpMethodSelect) {
+      simselectLbpMethodSelect.value = method;
+    }
+    return {
+      lbp_points: clamp(points, 4, 64),
+      lbp_radius: clamp(radius, 1, 16),
+      lbp_method: method,
+    };
+  }
+
+  function simselectQueryConfigPayload() {
+    const colorEnabled = simselectColorEnabledInput ? Boolean(simselectColorEnabledInput.checked) : true;
+    const textureEnabled = simselectTextureEnabledInput ? Boolean(simselectTextureEnabledInput.checked) : true;
+    const colorThreshold = parseNumber(
+      simselectColorThresholdInput && simselectColorThresholdInput.value,
+      SIMSELECT_DEFAULTS.colorThreshold
+    );
+    const textureThreshold = parseNumber(
+      simselectTextureThresholdInput && simselectTextureThresholdInput.value,
+      SIMSELECT_DEFAULTS.textureThreshold
+    );
+    return {
+      color_enabled: colorEnabled,
+      texture_enabled: textureEnabled,
+      color_threshold: clamp(colorThreshold, 0, 200),
+      texture_threshold: clamp(textureThreshold, 0, 10),
+    };
+  }
+
+  function setSimselectInputMode(nextMode) {
+    simselectInputMode = nextMode === "seed" ? "seed" : "brush";
+    if (simselectInputBrushBtn) {
+      simselectInputBrushBtn.classList.toggle("active", simselectInputMode === "brush");
+    }
+    if (simselectInputSeedBtn) {
+      simselectInputSeedBtn.classList.toggle("active", simselectInputMode === "seed");
+    }
+    if (viewport) {
+      viewport.classList.toggle("simselect-seed", selectionTool === "similarity" && simselectInputMode === "seed");
+    }
+  }
+
+  function setSimselectRoiMode(nextMode) {
+    simselectRoiMode = nextMode === "erase" ? "erase" : "paint";
+    if (simselectRoiPaintBtn) {
+      simselectRoiPaintBtn.classList.toggle("active", simselectRoiMode === "paint");
+    }
+    if (simselectRoiEraseBtn) {
+      simselectRoiEraseBtn.classList.toggle("active", simselectRoiMode === "erase");
+    }
+  }
+
+  function updateSimselectThresholdLabels() {
+    if (simselectBrushSizeValue) {
+      const brushSize = Math.round(parseNumber(simselectBrushSizeInput && simselectBrushSizeInput.value, 24));
+      simselectBrushSizeValue.textContent = `${brushSize} px`;
+    }
+    if (simselectColorThresholdValue) {
+      const colorThreshold = parseNumber(
+        simselectColorThresholdInput && simselectColorThresholdInput.value,
+        SIMSELECT_DEFAULTS.colorThreshold
+      );
+      simselectColorThresholdValue.textContent = colorThreshold.toFixed(1);
+    }
+    if (simselectTextureThresholdValue) {
+      const textureThreshold = parseNumber(
+        simselectTextureThresholdInput && simselectTextureThresholdInput.value,
+        SIMSELECT_DEFAULTS.textureThreshold
+      );
+      simselectTextureThresholdValue.textContent = textureThreshold.toFixed(2);
+    }
+  }
+
+  function resetSimselectRoiCanvas() {
+    if (!simselectRoiCanvas) {
+      return;
+    }
+    if (imageWidth > 0 && imageHeight > 0) {
+      simselectRoiCanvas.width = imageWidth;
+      simselectRoiCanvas.height = imageHeight;
+    }
+    const ctx = simselectRoiCanvas.getContext("2d");
+    if (!ctx) {
+      return;
+    }
+    ctx.clearRect(0, 0, simselectRoiCanvas.width, simselectRoiCanvas.height);
+    ctx.globalCompositeOperation = "source-over";
+    updateSimselectOverlayVisibility();
+  }
+
+  function ensureSimselectRoiMask() {
+    if (!imageWidth || !imageHeight) {
+      return false;
+    }
+    const requiredLength = imageWidth * imageHeight;
+    if (!(simselectRoiMask instanceof Uint8Array) || simselectRoiMask.length !== requiredLength) {
+      simselectRoiMask = new Uint8Array(requiredLength);
+      simselectRoiPixels = 0;
+      resetSimselectRoiCanvas();
+      updateSimselectStats();
+    }
+    return true;
+  }
+
+  function clearSimselectRoiMask(options) {
+    const opts = options && typeof options === "object" ? options : {};
+    if (!ensureSimselectRoiMask()) {
+      return;
+    }
+    simselectRoiMask.fill(0);
+    simselectRoiPixels = 0;
+    resetSimselectRoiCanvas();
+    clearSimselectPreview(true);
+    updateSimselectStats();
+    if (!opts.silent && selectionTool === "similarity") {
+      setStatus("ROI cleared.", false);
+    }
+  }
+
+  function clearSimselectStateForImage() {
+    if (simselectQueryTimer) {
+      window.clearTimeout(simselectQueryTimer);
+      simselectQueryTimer = null;
+    }
+    simselectQueryNonce += 1;
+    simselectPreparePromise = null;
+    simselectSeedId = null;
+    simselectMatchedIds = [];
+    simselectRoiMask = null;
+    simselectRoiPixels = 0;
+    isSimselectRoiPainting = false;
+    simselectRoiStrokeMoved = false;
+    simselectLastPoint = null;
+    setSimselectPreviewOverlay("");
+    setSimselectSeedOverlay("");
+    resetSimselectRoiCanvas();
+    updateSimselectStats();
+  }
+
+  function encodeRoiMaskRle(maskArray) {
+    if (!(maskArray instanceof Uint8Array) || maskArray.length <= 0) {
+      return [];
+    }
+    const runs = [];
+    let runStart = -1;
+    for (let i = 0; i < maskArray.length; i += 1) {
+      const value = maskArray[i] === 1;
+      if (value) {
+        if (runStart < 0) {
+          runStart = i;
+        }
+        continue;
+      }
+      if (runStart >= 0) {
+        runs.push([runStart, i - runStart]);
+        runStart = -1;
+      }
+    }
+    if (runStart >= 0) {
+      runs.push([runStart, maskArray.length - runStart]);
+    }
+    return runs;
+  }
+
+  function drawRoiBrushPoint(x, y, radius, mode) {
+    if (!ensureSimselectRoiMask()) {
+      return;
+    }
+    const cx = clamp(Math.round(x), 0, imageWidth - 1);
+    const cy = clamp(Math.round(y), 0, imageHeight - 1);
+    const r = Math.max(1, Math.round(radius));
+    const minX = Math.max(0, cx - r);
+    const maxX = Math.min(imageWidth - 1, cx + r);
+    const minY = Math.max(0, cy - r);
+    const maxY = Math.min(imageHeight - 1, cy + r);
+    const paint = mode !== "erase";
+    const rSquared = r * r;
+
+    for (let yy = minY; yy <= maxY; yy += 1) {
+      for (let xx = minX; xx <= maxX; xx += 1) {
+        const dx = xx - cx;
+        const dy = yy - cy;
+        if ((dx * dx) + (dy * dy) > rSquared) {
+          continue;
+        }
+        const idx = (yy * imageWidth) + xx;
+        const prev = simselectRoiMask[idx];
+        if (paint) {
+          if (prev === 0) {
+            simselectRoiMask[idx] = 1;
+            simselectRoiPixels += 1;
+          }
+        } else if (prev === 1) {
+          simselectRoiMask[idx] = 0;
+          simselectRoiPixels = Math.max(0, simselectRoiPixels - 1);
+        }
+      }
+    }
+
+    if (!simselectRoiCanvas) {
+      return;
+    }
+    const ctx = simselectRoiCanvas.getContext("2d");
+    if (!ctx) {
+      return;
+    }
+    if (paint) {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = "rgba(0, 178, 255, 0.45)";
+    } else {
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.fillStyle = "rgba(0, 0, 0, 1)";
+    }
+    ctx.beginPath();
+    ctx.arc(cx + 0.5, cy + 0.5, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalCompositeOperation = "source-over";
+  }
+
+  function drawRoiBrushStroke(fromPoint, toPoint) {
+    if (!fromPoint || !toPoint) {
+      return;
+    }
+    const radius = Math.round(parseNumber(simselectBrushSizeInput && simselectBrushSizeInput.value, 24));
+    const modeName = simselectRoiMode === "erase" ? "erase" : "paint";
+    const dx = toPoint.x - fromPoint.x;
+    const dy = toPoint.y - fromPoint.y;
+    const steps = Math.max(Math.abs(dx), Math.abs(dy), 1);
+    for (let step = 0; step <= steps; step += 1) {
+      const t = step / steps;
+      const x = fromPoint.x + (dx * t);
+      const y = fromPoint.y + (dy * t);
+      drawRoiBrushPoint(x, y, radius, modeName);
+    }
+    updateSimselectStats();
+  }
+
+  function scheduleSimselectQuery(delayMs) {
+    if (simselectQueryTimer) {
+      window.clearTimeout(simselectQueryTimer);
+      simselectQueryTimer = null;
+    }
+    if (selectionTool !== "similarity") {
+      return;
+    }
+    const delay = Number.isFinite(delayMs) ? Math.max(0, Number(delayMs)) : 130;
+    simselectQueryTimer = window.setTimeout(() => {
+      simselectQueryTimer = null;
+      runSimselectQuery();
+    }, delay);
+  }
+
+  async function prepareSimselectFeatures() {
+    if (simselectPreparePromise) {
+      return simselectPreparePromise;
+    }
+    const body = {
+      image_name: imageName,
+      feature_config: simselectFeatureConfigPayload(),
+    };
+    simselectPreparePromise = postJSON(`${apiBase}/simselect/prepare`, body)
+      .then((payload) => {
+        if (payload && payload.ok) {
+          setStatus(
+            `Similarity features ready for ${payload.num_segments || 0} segments (${payload.cache_hit ? "cache hit" : "computed"}).`,
+            false
+          );
+        }
+        return payload;
+      })
+      .finally(() => {
+        simselectPreparePromise = null;
+      });
+    return simselectPreparePromise;
+  }
+
+  async function runSimselectQuery() {
+    if (selectionTool !== "similarity") {
+      return;
+    }
+    if (simselectSeedId === null || simselectSeedId === undefined) {
+      clearSimselectPreview(true);
+      return;
+    }
+    if (!ensureSimselectRoiMask() || simselectRoiPixels <= 0) {
+      clearSimselectPreview(true);
+      return;
+    }
+    const queryConfig = simselectQueryConfigPayload();
+    if (!queryConfig.color_enabled && !queryConfig.texture_enabled) {
+      clearSimselectPreview(true);
+      setStatus("Enable color and/or texture similarity before querying.", true);
+      return;
+    }
+
+    const nonce = simselectQueryNonce + 1;
+    simselectQueryNonce = nonce;
+    const payloadBody = {
+      image_name: imageName,
+      seed_superpixel_id: simselectSeedId,
+      roi_mask: {
+        shape: [imageHeight, imageWidth],
+        runs: encodeRoiMaskRle(simselectRoiMask),
+      },
+      feature_config: simselectFeatureConfigPayload(),
+      ...queryConfig,
+    };
+    try {
+      const payload = await postJSON(`${apiBase}/simselect/query`, payloadBody);
+      if (nonce !== simselectQueryNonce) {
+        return;
+      }
+      simselectMatchedIds = Array.isArray(payload.matched_superpixel_ids)
+        ? payload.matched_superpixel_ids
+            .map((value) => Number(value))
+            .filter((value) => Number.isInteger(value) && value >= 0)
+        : [];
+      setSimselectPreviewOverlay(payload.matched_mask_png_base64 || "");
+      setSimselectSeedOverlay(payload.seed_mask_png_base64 || "");
+      updateSimselectStats();
+      setStatus(
+        `Similarity matched ${simselectMatchedIds.length} / ${Number(payload.candidate_count || 0)} candidate superpixels.`,
+        false
+      );
+    } catch (err) {
+      if (nonce !== simselectQueryNonce) {
+        return;
+      }
+      clearSimselectPreview(false);
+      setStatus(err.message, true);
+      showToast(err.message, "error");
+    }
+  }
+
+  async function setSimselectSeedAtEvent(event) {
+    const coords = imageCoordinatesFromEvent(event, false);
+    if (!coords) {
+      return;
+    }
+    try {
+      const payload = await postJSON(`${apiBase}/select_ids`, {
+        image_name: imageName,
+        tool: "brush",
+        points: [[coords.x, coords.y]],
+      });
+      const ids = Array.isArray(payload.selected_ids) ? payload.selected_ids : [];
+      if (!ids.length) {
+        setStatus("No superpixel available at that location.", true);
+        return;
+      }
+      const seed = Number(ids[0]);
+      if (!Number.isInteger(seed) || seed < 0) {
+        setStatus("Failed to set similarity seed.", true);
+        return;
+      }
+      simselectSeedId = seed;
+      updateSimselectStats();
+      setStatus(`Seed superpixel set to ${seed}.`, false);
+      scheduleSimselectQuery(0);
+    } catch (err) {
+      setStatus(err.message, true);
+      showToast(err.message, "error");
+    }
+  }
+
+  async function commitSimselectMatches(modeName) {
+    const action = modeName === "subtract" ? "subtract" : "add";
+    if (!Array.isArray(simselectMatchedIds) || simselectMatchedIds.length <= 0) {
+      setStatus("No similarity matches to commit.", true);
+      return;
+    }
+    let changed = 0;
+    if (action === "add") {
+      changed = addSelectedIds(simselectMatchedIds);
+    } else {
+      changed = removeSelectedIds(simselectMatchedIds);
+    }
+    await refreshSelectionOverlay();
+    const message =
+      action === "add"
+        ? `Added ${changed} matched superpixels to selection.`
+        : `Removed ${changed} matched superpixels from selection.`;
+    setStatus(message, false);
   }
 
   function updateZoomLabel() {
@@ -1312,6 +1894,7 @@
       boundaryImage.src = `${apiBase}/boundary/${encodeURIComponent(imageName)}?v=${Date.now()}`;
 
       await loadBaseImage;
+      clearSimselectStateForImage();
       await clearSelection();
       hideMarqueeRect();
       await refreshMaskForClass();
@@ -1327,6 +1910,10 @@
       if (freezeMasksToggle && Object.prototype.hasOwnProperty.call(context, "mask_freeze_default")) {
         freezeMasksToggle.checked = Boolean(context.mask_freeze_default);
       }
+      updateSelectionToolUI();
+      window.requestAnimationFrame(() => {
+        normalizeToolGridLayout();
+      });
 
       const targetItem =
         findFilmstripItemByUrl(targetUrl) ||
@@ -1467,14 +2054,22 @@
     imageHeight = baseImage.naturalHeight;
     stage.style.width = `${imageWidth}px`;
     stage.style.height = `${imageHeight}px`;
+    resetSimselectRoiCanvas();
     fitToViewport();
+    window.requestAnimationFrame(() => {
+      normalizeToolGridLayout();
+    });
   });
   if (baseImage.complete && baseImage.naturalWidth > 0) {
     imageWidth = baseImage.naturalWidth;
     imageHeight = baseImage.naturalHeight;
     stage.style.width = `${imageWidth}px`;
     stage.style.height = `${imageHeight}px`;
+    resetSimselectRoiCanvas();
     fitToViewport();
+    window.requestAnimationFrame(() => {
+      normalizeToolGridLayout();
+    });
   }
 
   window.addEventListener("resize", () => {
@@ -1504,6 +2099,25 @@
     }
 
     if (event.button !== 0) {
+      return;
+    }
+
+    if (selectionTool === "similarity") {
+      if (simselectInputMode !== "brush") {
+        return;
+      }
+      const coords = imageCoordinatesFromEvent(event, true);
+      if (!coords) {
+        return;
+      }
+      if (!ensureSimselectRoiMask()) {
+        return;
+      }
+      isSimselectRoiPainting = true;
+      simselectRoiStrokeMoved = false;
+      simselectLastPoint = { x: coords.x, y: coords.y };
+      drawRoiBrushStroke(simselectLastPoint, simselectLastPoint);
+      suppressNextClick = true;
       return;
     }
 
@@ -1552,6 +2166,19 @@
       return;
     }
 
+    if (isSimselectRoiPainting) {
+      const coords = imageCoordinatesFromEvent(event, true);
+      if (!coords || !simselectLastPoint) {
+        return;
+      }
+      if (simselectLastPoint.x !== coords.x || simselectLastPoint.y !== coords.y) {
+        simselectRoiStrokeMoved = true;
+        drawRoiBrushStroke(simselectLastPoint, coords);
+        simselectLastPoint = { x: coords.x, y: coords.y };
+      }
+      return;
+    }
+
     if (isMarqueeSelecting && marqueeStartViewport) {
       const point = viewportCoordsFromEvent(event);
       const current = {
@@ -1573,6 +2200,13 @@
       const points = brushPoints.slice();
       brushPoints = [];
       applyBrushSelection(points);
+      return;
+    }
+
+    if (isSimselectRoiPainting) {
+      isSimselectRoiPainting = false;
+      simselectLastPoint = null;
+      scheduleSimselectQuery(simselectRoiStrokeMoved ? 120 : 60);
       return;
     }
 
@@ -1601,6 +2235,12 @@
     if (event.button !== 0) {
       return;
     }
+    if (selectionTool === "similarity") {
+      if (simselectInputMode === "seed") {
+        await setSimselectSeedAtEvent(event);
+      }
+      return;
+    }
     if (selectionTool !== "single") {
       return;
     }
@@ -1609,6 +2249,9 @@
 
   viewport.addEventListener("contextmenu", async (event) => {
     if (isImageSwitching) {
+      return;
+    }
+    if (selectionTool !== "single") {
       return;
     }
     const coords = imageCoordinatesFromEvent(event, false);
@@ -1727,6 +2370,84 @@
   }
   setSelectionTool(selectionTool);
 
+  if (simselectBrushSizeInput) {
+    simselectBrushSizeInput.value = "24";
+    simselectBrushSizeInput.addEventListener("input", updateSimselectThresholdLabels);
+  }
+  if (simselectColorEnabledInput) {
+    simselectColorEnabledInput.checked = Boolean(SIMSELECT_DEFAULTS.colorEnabled);
+    simselectColorEnabledInput.addEventListener("change", () => scheduleSimselectQuery(60));
+  }
+  if (simselectTextureEnabledInput) {
+    simselectTextureEnabledInput.checked = Boolean(SIMSELECT_DEFAULTS.textureEnabled);
+    simselectTextureEnabledInput.addEventListener("change", () => scheduleSimselectQuery(60));
+  }
+  if (simselectColorThresholdInput) {
+    simselectColorThresholdInput.value = String(clamp(SIMSELECT_DEFAULTS.colorThreshold, 0, 120));
+    simselectColorThresholdInput.addEventListener("input", () => {
+      updateSimselectThresholdLabels();
+      scheduleSimselectQuery(80);
+    });
+  }
+  if (simselectTextureThresholdInput) {
+    simselectTextureThresholdInput.value = String(clamp(SIMSELECT_DEFAULTS.textureThreshold, 0, 5));
+    simselectTextureThresholdInput.addEventListener("input", () => {
+      updateSimselectThresholdLabels();
+      scheduleSimselectQuery(80);
+    });
+  }
+  if (simselectLbpPointsInput) {
+    simselectLbpPointsInput.value = String(clamp(SIMSELECT_DEFAULTS.lbpPoints, 4, 64));
+    simselectLbpPointsInput.addEventListener("change", () => scheduleSimselectQuery(120));
+  }
+  if (simselectLbpRadiusInput) {
+    simselectLbpRadiusInput.value = String(clamp(SIMSELECT_DEFAULTS.lbpRadius, 1, 16));
+    simselectLbpRadiusInput.addEventListener("change", () => scheduleSimselectQuery(120));
+  }
+  if (simselectLbpMethodSelect) {
+    simselectLbpMethodSelect.value = normalizeSimselectLbpMethod(SIMSELECT_DEFAULTS.lbpMethod);
+    simselectLbpMethodSelect.addEventListener("change", () => scheduleSimselectQuery(120));
+  }
+  if (simselectInputBrushBtn) {
+    simselectInputBrushBtn.addEventListener("click", () => setSimselectInputMode("brush"));
+  }
+  if (simselectInputSeedBtn) {
+    simselectInputSeedBtn.addEventListener("click", () => setSimselectInputMode("seed"));
+  }
+  if (simselectRoiPaintBtn) {
+    simselectRoiPaintBtn.addEventListener("click", () => setSimselectRoiMode("paint"));
+  }
+  if (simselectRoiEraseBtn) {
+    simselectRoiEraseBtn.addEventListener("click", () => setSimselectRoiMode("erase"));
+  }
+  if (simselectPrepareBtn) {
+    simselectPrepareBtn.addEventListener("click", async () => {
+      try {
+        await prepareSimselectFeatures();
+      } catch (err) {
+        setStatus(err.message, true);
+        showToast(err.message, "error");
+      }
+    });
+  }
+  if (simselectAddBtn) {
+    simselectAddBtn.addEventListener("click", () => commitSimselectMatches("add"));
+  }
+  if (simselectSubtractBtn) {
+    simselectSubtractBtn.addEventListener("click", () => commitSimselectMatches("subtract"));
+  }
+  if (simselectResetBtn) {
+    simselectResetBtn.addEventListener("click", () => {
+      clearSimselectPreview(false);
+      if (simselectSeedId !== null && simselectRoiPixels > 0) {
+        scheduleSimselectQuery(0);
+      }
+    });
+  }
+  if (simselectClearRoiBtn) {
+    simselectClearRoiBtn.addEventListener("click", () => clearSimselectRoiMask({ silent: false }));
+  }
+
   if (applySelectionBtn) {
     applySelectionBtn.addEventListener("click", bulkApplySelection);
   }
@@ -1823,13 +2544,36 @@
       return;
     }
     if (lower === "b") {
-      setSelectionTool("brush");
+      if (selectionTool === "similarity") {
+        setSimselectInputMode(simselectInputMode === "brush" ? "seed" : "brush");
+      } else {
+        setSelectionTool("brush");
+      }
+      event.preventDefault();
+      return;
+    }
+    if (lower === "s") {
+      setSelectionTool("similarity");
       event.preventDefault();
       return;
     }
     if (lower === "m") {
       setSelectionTool("marquee");
       event.preventDefault();
+      return;
+    }
+    if (event.key === "Enter" && selectionTool === "similarity") {
+      event.preventDefault();
+      if (event.shiftKey) {
+        commitSimselectMatches("subtract");
+      } else {
+        commitSimselectMatches("add");
+      }
+      return;
+    }
+    if (event.key === "Escape" && selectionTool === "similarity") {
+      event.preventDefault();
+      clearSimselectPreview(false);
       return;
     }
     if (event.key === "ArrowLeft") {
@@ -1880,6 +2624,10 @@
   updateSlicPresetUI();
   updateSelectionCount();
   setSelectionOverlay("");
+  setSimselectInputMode("brush");
+  setSimselectRoiMode("paint");
+  updateSimselectThresholdLabels();
+  clearSimselectStateForImage();
   hideMarqueeRect();
   setupFilmstrip();
   refreshMaskForClass().catch(() => {

@@ -1,6 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Workspaces - {{ app_name }}{% endblock %}
 {% block content %}
+{% if selected_workspace %}
+<section class="panel workspace-continue-card">
+  <p class="muted">Continue where you left off</p>
+  <h2>{{ selected_workspace.name }}</h2>
+  <p class="workspace-continue-meta">
+    Last updated
+    <time datetime="{{ selected_workspace.updated_at }}" title="{{ selected_workspace.updated_at }}">
+      {{ selected_workspace.updated_at|human_datetime }}
+    </time>
+  </p>
+  <p><a class="primary-btn" href="{{ url_for('main.workspace_dashboard', workspace_id=selected_workspace.id) }}">Open Workspace</a></p>
+</section>
+{% endif %}
+
 <section class="panel">
   <h2>Workspaces</h2>
   <p class="muted">Select an existing workspace or create a new one to get started.</p>
@@ -17,10 +31,15 @@
       </thead>
       <tbody>
         {% for ws in workspace_rows %}
-          <tr>
-            <td>{{ ws.name }}</td>
-            <td>{{ ws.created_at }}</td>
-            <td>{{ ws.updated_at }}</td>
+          <tr class="workspace-row{% if selected_workspace_id == ws.id %} is-selected{% endif %}">
+            <td>
+              {{ ws.name }}
+              {% if selected_workspace_id == ws.id %}
+                <span class="badge subtle">Last used</span>
+              {% endif %}
+            </td>
+            <td><time datetime="{{ ws.created_at }}" title="{{ ws.created_at }}">{{ ws.created_at|human_datetime }}</time></td>
+            <td><time datetime="{{ ws.updated_at }}" title="{{ ws.updated_at }}">{{ ws.updated_at|human_datetime }}</time></td>
             <td><a class="primary-btn" href="{{ url_for('main.workspace_dashboard', workspace_id=ws.id) }}">Open</a></td>
           </tr>
         {% endfor %}

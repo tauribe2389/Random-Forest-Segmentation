@@ -16,6 +16,8 @@ models/
 runs/
 workspace/
 artifacts/
+model_foundry_v2/instance/
+model_foundry_v2/data/
 
 # Virtual environments
 .venv/

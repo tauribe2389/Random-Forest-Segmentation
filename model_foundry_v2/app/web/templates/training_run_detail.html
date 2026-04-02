@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Training Run {{ training_run.id }} - {{ app_name }}{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h1>Training Run {{ training_run.id }}</h1>
+        <p class="muted">Training artifacts are stored separately from annotations and prediction outputs.</p>
+      </div>
+      <span class="status-pill {{ training_run.status|lower }}">{{ training_run.status }}</span>
+    </div>
+    <div class="grid-2">
+      <div class="toolbar-note">
+        <strong>Snapshot</strong><br>
+        <a href="{{ url_for('v2.snapshot_detail', snapshot_id=snapshot.id) }}">#{{ snapshot.id }} {{ snapshot.name }}</a>
+      </div>
+      <div class="toolbar-note">
+        <strong>Model Definition</strong><br>
+        <a href="{{ url_for('v2.model_detail', model_definition_id=model_definition.id) }}">{{ model_definition.name }}</a>
+        (<code>{{ model_definition.family_id }}</code>)
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="toolbar-note">
+        <strong>Created</strong><br>
+        {{ training_run.created_at }}
+      </div>
+      <div class="toolbar-note">
+        <strong>Updated</strong><br>
+        {{ training_run.updated_at }}
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h2>Resolved Model Config</h2>
+        <p class="muted">This is the current config stored on the model definition after training.</p>
+      </div>
+    </div>
+    {% if model_config %}
+      <pre class="json-block">{{ model_config|tojson(indent=2) }}</pre>
+    {% else %}
+      <div class="empty-state">No model config values stored.</div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h2>Training Artifacts</h2>
+        <p class="muted">The manifest and model files are machine-readable outputs of this run.</p>
+      </div>
+    </div>
+    {% if artifacts %}
+      <table class="artifact-table">
+        <thead>
+          <tr>
+            <th>Kind</th>
+            <th>Relative Path</th>
+            <th>Metadata</th>
+            <th>Open</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for artifact in artifacts %}
+            <tr>
+              <td><code>{{ artifact.artifact_kind }}</code></td>
+              <td><code class="mono-wrap">{{ artifact.relative_path }}</code></td>
+              <td><pre class="json-block">{{ artifact.metadata_json or "{}" }}</pre></td>
+              <td><a class="button-link secondary" href="{{ url_for('v2.artifact_file', relative_path=artifact.relative_path|replace('\\', '/')) }}">Open</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No training artifacts recorded for this run.</p>
+    {% endif %}
+  </section>
+{% endblock %}

@@ -100,9 +100,11 @@
         {% set input_link = file_url(item.input_image) %}
         {% set raw_overlay_link = file_url(item.raw_overlay_path or item.overlay_path) %}
         {% set raw_mask_link = file_url(item.raw_mask_path or item.mask_path) %}
+        {% set raw_mask_csv_link = file_url(item.raw_mask_csv_path or item.pred_csv_path) %}
         {% set raw_conf_link = file_url(item.conf_path) %}
         {% set refined_overlay_link = file_url(item.refined_overlay_path) %}
         {% set refined_mask_link = file_url(item.refined_mask_path) %}
+        {% set refined_mask_csv_link = file_url(item.refined_mask_csv_path) %}
         {% set postprocess_item = item.postprocess_applied %}
         <article class="analysis-item-card" data-analysis-card>
           <div class="analysis-item-head">
@@ -144,6 +146,7 @@
                 <p class="analysis-file-links">
                   {% if raw_overlay_link %}<a href="{{ raw_overlay_link }}" target="_blank" rel="noopener">Raw overlay</a>{% endif %}
                   {% if raw_mask_link %}{% if raw_overlay_link %} | {% endif %}<a href="{{ raw_mask_link }}" target="_blank" rel="noopener">Raw mask</a>{% endif %}
+                  {% if raw_mask_csv_link %}{% if raw_overlay_link or raw_mask_link %} | {% endif %}<a href="{{ raw_mask_csv_link }}" target="_blank" rel="noopener">Raw mask CSV</a>{% endif %}
                   {% if raw_conf_link %}{% if raw_overlay_link or raw_mask_link %} | {% endif %}<a href="{{ raw_conf_link }}" target="_blank" rel="noopener">Raw confidence</a>{% endif %}
                 </p>
               </section>
@@ -167,6 +170,7 @@
                 <p class="analysis-file-links">
                   {% if refined_overlay_link %}<a href="{{ refined_overlay_link }}" target="_blank" rel="noopener">Refined overlay</a>{% endif %}
                   {% if refined_mask_link %}{% if refined_overlay_link %} | {% endif %}<a href="{{ refined_mask_link }}" target="_blank" rel="noopener">Refined mask</a>{% endif %}
+                  {% if refined_mask_csv_link %}{% if refined_overlay_link or refined_mask_link %} | {% endif %}<a href="{{ refined_mask_csv_link }}" target="_blank" rel="noopener">Refined mask CSV</a>{% endif %}
                 </p>
               </section>
             </div>
@@ -195,6 +199,7 @@
                 <p class="analysis-file-links">
                   {% if raw_overlay_link %}<a href="{{ raw_overlay_link }}" target="_blank" rel="noopener">Overlay</a>{% endif %}
                   {% if raw_mask_link %}{% if raw_overlay_link %} | {% endif %}<a href="{{ raw_mask_link }}" target="_blank" rel="noopener">Mask</a>{% endif %}
+                  {% if raw_mask_csv_link %}{% if raw_overlay_link or raw_mask_link %} | {% endif %}<a href="{{ raw_mask_csv_link }}" target="_blank" rel="noopener">Mask CSV</a>{% endif %}
                   {% if raw_conf_link %}{% if raw_overlay_link or raw_mask_link %} | {% endif %}<a href="{{ raw_conf_link }}" target="_blank" rel="noopener">Confidence</a>{% endif %}
                 </p>
               </section>

@@ -437,7 +437,7 @@
             <tr><th>ID</th><td>{{ model.id }}</td></tr>
             <tr><th>Name</th><td>{{ model.name }}</td></tr>
             <tr><th>Status</th><td>{{ model.status }}</td></tr>
-            <tr><th>Created</th><td>{{ model.created_at }}</td></tr>
+            <tr><th>Created</th><td><time datetime="{{ model.created_at }}" title="{{ model.created_at }}">{{ model.created_at|human_datetime }}</time></td></tr>
             <tr>
               <th>Dataset</th>
               <td>

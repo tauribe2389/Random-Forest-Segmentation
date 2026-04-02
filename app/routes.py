@@ -1102,6 +1102,7 @@ def switch_workspace() -> str:
 def dashboard_root() -> str:
     workspace_rows = _storage().list_workspaces()
     selected_workspace_id: int | None = None
+    selected_workspace: dict[str, Any] | None = None
     session_workspace_id = session.get("workspace_id")
     if isinstance(session_workspace_id, int):
         selected_workspace_id = int(session_workspace_id)
@@ -1113,11 +1114,16 @@ def dashboard_root() -> str:
         selected_workspace_id = int(workspace_rows[0]["id"]) if workspace_rows else None
     if selected_workspace_id is not None:
         session["workspace_id"] = selected_workspace_id
+        selected_workspace = next(
+            (row for row in workspace_rows if int(row["id"]) == selected_workspace_id),
+            None,
+        )
 
     return render_template(
         "workspace_landing.html",
         workspace_rows=workspace_rows,
         selected_workspace_id=selected_workspace_id,
+        selected_workspace=selected_workspace,
     )
 
 
@@ -1128,14 +1134,15 @@ def workspace_dashboard(workspace_id: int) -> str:
     dataset_projects = storage.list_workspace_datasets(workspace_id)
     registered_datasets = storage.list_datasets(workspace_id=workspace_id)
     models = storage.list_models(workspace_id=workspace_id)
-    runs = storage.list_runs(workspace_id=workspace_id, limit=8)
+    all_runs = storage.list_runs(workspace_id=workspace_id, limit=1000)
+    runs = all_runs[:8]
     image_count = _workspace_image_count(workspace)
 
     summary = {
         "images": image_count,
         "datasets": len(dataset_projects),
         "models": len(models),
-        "analysis": len(runs),
+        "analysis": len(all_runs),
     }
 
     if image_count == 0:
@@ -2900,6 +2907,12 @@ def analysis_details(run_id: int, workspace_id: int | None = None) -> str:
         enriched = dict(item)
         input_image = str(enriched.get("input_image", ""))
         input_image_name = Path(input_image).name if input_image else "image"
+        summary_payload = enriched.get("summary_json")
+        artifact_payload = (
+            summary_payload.get("prediction_artifacts", {})
+            if isinstance(summary_payload, dict)
+            else {}
+        )
         flip_payload = enriched.get("flip_stats_json")
         if not isinstance(flip_payload, dict):
             flip_payload = None
@@ -2908,6 +2921,11 @@ def analysis_details(run_id: int, workspace_id: int | None = None) -> str:
             area_delta_payload = None
         area_rows = _sorted_area_delta_rows(area_delta_payload)
         enriched["input_image_name"] = input_image_name
+        enriched["raw_mask_csv_path"] = str(artifact_payload.get("raw_mask_csv_path") or "").strip() or None
+        enriched["pred_csv_path"] = str(artifact_payload.get("pred_csv_path") or "").strip() or None
+        enriched["refined_mask_csv_path"] = (
+            str(artifact_payload.get("refined_mask_csv_path") or "").strip() or None
+        )
         enriched["flip_rate_percent"] = (
             float(flip_payload.get("flip_rate", 0.0)) * 100.0 if flip_payload is not None else None
         )

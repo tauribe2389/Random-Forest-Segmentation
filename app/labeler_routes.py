@@ -8,6 +8,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,6 +57,14 @@ from .services.labeling.image_io import (
     save_binary_mask,
 )
 from .services.labeling.mask_state import ImageMaskState
+from .services.labeling.similarity_select import (
+    candidate_segments_from_roi,
+    load_or_create_feature_cache,
+    normalize_feature_config,
+    normalize_query_config,
+    select_matching_superpixels,
+    superpixel_signature_from_settings,
+)
 from .services.labeling.slic_cache import clear_slic_cache, load_or_create_slic_cache
 from .services.storage import Storage
 
@@ -71,6 +80,17 @@ CLASS_COLORS = [
     (255, 149, 0, 120),
 ]
 SELECTION_COLOR = (255, 223, 0, 130)
+SIMSELECT_MATCH_COLOR = (0, 178, 255, 120)
+SIMSELECT_SEED_COLOR = (255, 0, 128, 170)
+SIMSELECT_DEFAULTS: dict[str, Any] = {
+    "color_enabled": True,
+    "texture_enabled": True,
+    "color_threshold": 18.0,
+    "texture_threshold": 0.35,
+    "lbp_points": 8,
+    "lbp_radius": 1,
+    "lbp_method": "uniform",
+}
 
 SLIC_DETAIL_PRESETS: dict[str, dict[str, float]] = {
     "low": {"n_segments": 700, "compactness": 12.0, "sigma": 1.2},
@@ -1013,6 +1033,58 @@ def _selection_ids_from_marquee(
     return sorted(selected)
 
 
+def _simselect_feature_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    feature_payload = payload.get("feature_config")
+    if isinstance(feature_payload, dict):
+        return dict(feature_payload)
+    return {
+        "lbp_points": payload.get("lbp_points"),
+        "lbp_radius": payload.get("lbp_radius"),
+        "lbp_method": payload.get("lbp_method"),
+    }
+
+
+def _decode_roi_mask(roi_payload: Any, *, expected_shape: tuple[int, int]) -> np.ndarray:
+    height, width = expected_shape
+    total = int(height * width)
+    if total <= 0:
+        return np.zeros((height, width), dtype=bool)
+
+    shape_payload: Any = None
+    runs_payload: Any = None
+    if isinstance(roi_payload, dict):
+        shape_payload = roi_payload.get("shape")
+        runs_payload = roi_payload.get("runs")
+    elif isinstance(roi_payload, list):
+        runs_payload = roi_payload
+    else:
+        return np.zeros((height, width), dtype=bool)
+
+    if isinstance(shape_payload, (list, tuple)) and len(shape_payload) >= 2:
+        shape_h = _to_int(shape_payload[0])
+        shape_w = _to_int(shape_payload[1])
+        if shape_h is None or shape_w is None or int(shape_h) != int(height) or int(shape_w) != int(width):
+            raise ValueError("ROI shape does not match the current image.")
+    if not isinstance(runs_payload, list):
+        raise ValueError("ROI mask runs must be an array.")
+
+    flat = np.zeros((total,), dtype=bool)
+    for run in runs_payload[:500000]:
+        if not isinstance(run, (list, tuple)) or len(run) < 2:
+            continue
+        start = _to_int(run[0])
+        length = _to_int(run[1])
+        if start is None or length is None:
+            continue
+        if length <= 0:
+            continue
+        start_idx = max(0, min(total, int(start)))
+        end_idx = max(start_idx, min(total, start_idx + int(length)))
+        if end_idx > start_idx:
+            flat[start_idx:end_idx] = True
+    return flat.reshape((height, width))
+
+
 def _clear_project_state(project_id: int) -> None:
     sid = _labeler_session_id()
     prefix = f"{project_id}:"
@@ -1474,6 +1546,7 @@ def _render_labeler_page(
         slic_current=current_slic,
         freeze_masks_default=freeze_masks_default,
         slic_detail_presets=SLIC_DETAIL_PRESETS,
+        simselect_defaults=SIMSELECT_DEFAULTS,
         project=project,
     )
 
@@ -1673,6 +1746,150 @@ def _api_project_selection_preview(project: dict[str, Any]):
             mask_bool = np.isin(state.segments, selected_arr)
         overlay = _mask_overlay_base64(mask_bool, SELECTION_COLOR)
     return jsonify({"mask_png_base64": overlay, "count": len(selected_ids)})
+
+
+def _load_simselect_feature_cache(
+    project: dict[str, Any],
+    safe_name: str,
+    state: ImageMaskState,
+    feature_payload: dict[str, Any],
+):
+    slic_settings = _effective_slic_for_image(project, safe_name)
+    superpixel_signature = superpixel_signature_from_settings(slic_settings)
+    feature_config = normalize_feature_config(feature_payload)
+    img_path = image_path(_project_images_dir(project), safe_name)
+    feature_cache = load_or_create_feature_cache(
+        image_path=img_path,
+        cache_dir=_project_cache_dir(project),
+        segments=state.segments,
+        superpixel_signature=superpixel_signature,
+        feature_config=feature_config,
+    )
+    return feature_cache, feature_config
+
+
+def _api_project_simselect_prepare(project: dict[str, Any]):
+    payload = request.get_json(silent=True) or {}
+    image_name = payload.get("image_name", "")
+    try:
+        safe_name, state, _ = _get_or_create_state(project, image_name)
+    except FileNotFoundError:
+        return _json_error("Image not found.", 404)
+
+    try:
+        feature_cache, feature_config = _load_simselect_feature_cache(
+            project,
+            safe_name,
+            state,
+            _simselect_feature_payload(payload),
+        )
+    except Exception as exc:
+        return _json_error(f"Failed to prepare similarity features: {exc}", 400)
+
+    return jsonify(
+        {
+            "ok": True,
+            "image_name": safe_name,
+            "cache_key": feature_cache.cache_key,
+            "cache_hit": bool(feature_cache.cache_hit),
+            "num_segments": int(feature_cache.lab_means.shape[0]),
+            "feature_config": feature_config.signature_payload(),
+        }
+    )
+
+
+def _api_project_simselect_query(project: dict[str, Any]):
+    payload = request.get_json(silent=True) or {}
+    image_name = payload.get("image_name", "")
+    seed_superpixel_id = _to_int(payload.get("seed_superpixel_id"))
+    if seed_superpixel_id is None or int(seed_superpixel_id) < 0:
+        return _json_error("seed_superpixel_id must be a non-negative integer.", 400)
+
+    try:
+        safe_name, state, _ = _get_or_create_state(project, image_name)
+    except FileNotFoundError:
+        return _json_error("Image not found.", 404)
+
+    try:
+        roi_mask = _decode_roi_mask(payload.get("roi_mask"), expected_shape=tuple(state.segments.shape))
+    except ValueError as exc:
+        return _json_error(str(exc), 400)
+
+    h, w = state.segments.shape
+    max_sp_id = int(np.max(state.segments)) if h > 0 and w > 0 else -1
+    if int(seed_superpixel_id) > max_sp_id:
+        return _json_error("seed_superpixel_id is out of range for this image.", 400)
+
+    query_config = normalize_query_config(payload)
+    started_at = time.perf_counter()
+    try:
+        feature_cache, feature_config = _load_simselect_feature_cache(
+            project,
+            safe_name,
+            state,
+            _simselect_feature_payload(payload),
+        )
+    except Exception as exc:
+        return _json_error(f"Failed to load similarity feature cache: {exc}", 400)
+
+    roi_pixel_count = int(np.count_nonzero(roi_mask))
+    candidate_ids = candidate_segments_from_roi(state.segments, roi_mask)
+    matched_ids, color_distances, texture_distances = select_matching_superpixels(
+        candidate_segment_ids=candidate_ids,
+        seed_segment_id=int(seed_superpixel_id),
+        lab_means=feature_cache.lab_means,
+        lbp_hist=feature_cache.lbp_hist,
+        query_config=query_config,
+    )
+
+    if matched_ids.size <= 0:
+        matched_mask = np.zeros_like(state.segments, dtype=bool)
+    else:
+        matched_mask = np.isin(state.segments, matched_ids)
+    seed_mask = state.segments == int(seed_superpixel_id)
+    elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+    color_summary: dict[str, float] | None = None
+    if color_distances.size > 0:
+        color_summary = {
+            "min": float(np.min(color_distances)),
+            "max": float(np.max(color_distances)),
+            "mean": float(np.mean(color_distances)),
+        }
+    texture_summary: dict[str, float] | None = None
+    if texture_distances.size > 0:
+        texture_summary = {
+            "min": float(np.min(texture_distances)),
+            "max": float(np.max(texture_distances)),
+            "mean": float(np.mean(texture_distances)),
+        }
+
+    return jsonify(
+        {
+            "ok": True,
+            "image_name": safe_name,
+            "seed_superpixel_id": int(seed_superpixel_id),
+            "matched_superpixel_ids": [int(item) for item in matched_ids.tolist()],
+            "matched_count": int(matched_ids.shape[0]),
+            "candidate_count": int(candidate_ids.shape[0]),
+            "roi_pixel_count": roi_pixel_count,
+            "cache_key": feature_cache.cache_key,
+            "cache_hit": bool(feature_cache.cache_hit),
+            "feature_config": feature_config.signature_payload(),
+            "query_config": {
+                "color_enabled": bool(query_config.color_enabled),
+                "texture_enabled": bool(query_config.texture_enabled),
+                "color_threshold": float(query_config.color_threshold),
+                "texture_threshold": float(query_config.texture_threshold),
+            },
+            "time_ms": float(elapsed_ms),
+            "distances": {
+                "color": color_summary,
+                "texture": texture_summary,
+            },
+            "matched_mask_png_base64": _mask_overlay_base64(matched_mask, SIMSELECT_MATCH_COLOR),
+            "seed_mask_png_base64": _mask_overlay_base64(seed_mask, SIMSELECT_SEED_COLOR),
+        }
+    )
 
 
 def _api_project_bulk_apply(project: dict[str, Any]):
@@ -2471,6 +2688,20 @@ def api_selection_preview(workspace_id: int):
     return _api_project_selection_preview(workspace)
 
 
+@bp.route("/workspace/<int:workspace_id>/images/api/simselect/prepare", methods=["POST"])
+@bp.route("/labeler/project/<int:workspace_id>/api/simselect/prepare", methods=["POST"])
+def api_simselect_prepare(workspace_id: int):
+    workspace = _get_workspace_or_404(workspace_id)
+    return _api_project_simselect_prepare(workspace)
+
+
+@bp.route("/workspace/<int:workspace_id>/images/api/simselect/query", methods=["POST"])
+@bp.route("/labeler/project/<int:workspace_id>/api/simselect/query", methods=["POST"])
+def api_simselect_query(workspace_id: int):
+    workspace = _get_workspace_or_404(workspace_id)
+    return _api_project_simselect_query(workspace)
+
+
 @bp.route("/workspace/<int:workspace_id>/images/api/bulk_apply", methods=["POST"])
 @bp.route("/labeler/project/<int:workspace_id>/api/bulk_apply", methods=["POST"])
 def api_bulk_apply(workspace_id: int):
@@ -2622,6 +2853,18 @@ def dataset_api_select_ids(workspace_id: int, dataset_id: int):
 def dataset_api_selection_preview(workspace_id: int, dataset_id: int):
     _, dataset_project = _get_dataset_project_or_404(workspace_id, dataset_id)
     return _api_project_selection_preview(dataset_project)
+
+
+@bp.route("/workspace/<int:workspace_id>/datasets/<int:dataset_id>/images/api/simselect/prepare", methods=["POST"])
+def dataset_api_simselect_prepare(workspace_id: int, dataset_id: int):
+    _, dataset_project = _get_dataset_project_or_404(workspace_id, dataset_id)
+    return _api_project_simselect_prepare(dataset_project)
+
+
+@bp.route("/workspace/<int:workspace_id>/datasets/<int:dataset_id>/images/api/simselect/query", methods=["POST"])
+def dataset_api_simselect_query(workspace_id: int, dataset_id: int):
+    _, dataset_project = _get_dataset_project_or_404(workspace_id, dataset_id)
+    return _api_project_simselect_query(dataset_project)
 
 
 @bp.route("/workspace/<int:workspace_id>/datasets/<int:dataset_id>/images/api/bulk_apply", methods=["POST"])

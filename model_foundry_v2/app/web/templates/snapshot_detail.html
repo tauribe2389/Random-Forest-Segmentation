@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+{% block title %}{{ snapshot.name }} - {{ app_name }}{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h1>{{ snapshot.name }}</h1>
+        <p class="muted">
+          Immutable snapshot from
+          {% if source_dataset %}
+            <a href="{{ url_for('v2.dataset_detail', dataset_id=source_dataset.id) }}">{{ source_dataset.name }}</a>
+          {% else %}
+            draft dataset {{ snapshot.draft_dataset_id }}
+          {% endif %}
+        </p>
+      </div>
+      <div class="inline-actions">
+        <span class="badge info">Snapshot {{ snapshot.id }}</span>
+        <span class="badge success">{{ snapshot.image_count }} image{{ "" if snapshot.image_count == 1 else "s" }}</span>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="toolbar-note">
+        <strong>Schema Version</strong><br>
+        {{ snapshot.class_schema_version }}
+      </div>
+      <div class="toolbar-note">
+        <strong>Created</strong><br>
+        {{ snapshot.created_at }}
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h2>Class Schema</h2>
+        <p class="muted">This schema is frozen as part of the snapshot identity.</p>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Class Index</th>
+          <th>Name</th>
+          <th>Color</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in class_schema %}
+          <tr>
+            <td>{{ entry.class_index }}</td>
+            <td>{{ entry.name }}</td>
+            <td><code>{{ entry.color }}</code></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h2>Snapshot Builders</h2>
+        <p class="muted">Builders produce derived artifacts only. They do not change snapshot identity or source annotations.</p>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Builder</th>
+          <th>Description</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for builder in builders %}
+          <tr>
+            <td><code>{{ builder.builder_id }}</code></td>
+            <td>{{ builder.description }}</td>
+            <td>
+              <form class="inline" method="post" action="{{ url_for('v2.build_snapshot_artifact', snapshot_id=snapshot.id) }}" data-pending-text="Building artifact...">
+                <input type="hidden" name="builder_id" value="{{ builder.builder_id }}">
+                <button type="submit">Build</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="grid-2">
+    <div class="card">
+      <div class="section-head">
+        <div>
+          <h2>Training Runs</h2>
+          <p class="muted">Training consumes immutable snapshot inputs.</p>
+        </div>
+      </div>
+      {% if model_definitions %}
+        <form method="post" action="{{ url_for('v2.create_training_run', snapshot_id=snapshot.id) }}" data-pending-text="Starting training...">
+          <label>Model definition</label>
+          <select name="model_definition_id">
+            {% for model in model_definitions %}
+              <option value="{{ model.id }}">{{ model.name }} ({{ model.family_id }})</option>
+            {% endfor %}
+          </select>
+          <div class="form-actions">
+            <button type="submit">Train model on snapshot</button>
+          </div>
+        </form>
+      {% else %}
+        <div class="empty-state">Create a model definition first in the workspace Models section.</div>
+      {% endif %}
+      {% if training_rows %}
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Model</th>
+              <th>Status</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in training_rows %}
+              <tr>
+                <td><a href="{{ url_for('v2.training_run_detail', training_run_id=row.run.id) }}">{{ row.run.id }}</a></td>
+                <td>{{ row.model.name if row.model else row.run.model_definition_id }}</td>
+                <td><span class="status-pill {{ row.run.status|lower }}">{{ row.run.status }}</span></td>
+                <td>{{ row.run.updated_at }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="muted">No training runs yet.</p>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <div class="section-head">
+        <div>
+          <h2>Prediction Runs</h2>
+          <p class="muted">Prediction outputs remain separate from truth until explicit promotion.</p>
+        </div>
+      </div>
+      {% if model_definitions %}
+        <form method="post" action="{{ url_for('v2.create_prediction_run', snapshot_id=snapshot.id) }}" data-pending-text="Creating prediction run...">
+          <label>Model definition</label>
+          <select name="model_definition_id">
+            {% for model in model_definitions %}
+              <option value="{{ model.id }}">{{ model.name }} ({{ model.family_id }})</option>
+            {% endfor %}
+          </select>
+          <div class="form-actions">
+            <button type="submit">Create prediction run</button>
+          </div>
+        </form>
+      {% else %}
+        <div class="empty-state">Create a model definition first in the workspace Models section.</div>
+      {% endif %}
+      {% if prediction_rows %}
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Model</th>
+              <th>Status</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in prediction_rows %}
+              <tr>
+                <td><a href="{{ url_for('v2.prediction_run_detail', prediction_run_id=row.run.id) }}">{{ row.run.id }}</a></td>
+                <td>{{ row.model.name if row.model else row.run.model_definition_id }}</td>
+                <td><span class="status-pill {{ row.run.status|lower }}">{{ row.run.status }}</span></td>
+                <td>{{ row.run.updated_at }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="muted">No prediction runs yet.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="grid-2">
+    <div class="card">
+      <div class="section-head">
+        <div>
+          <h2>Snapshot Items</h2>
+          <p class="muted">Each image is pinned to the annotation revision referenced by this snapshot.</p>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Image ID</th>
+            <th>Source Path</th>
+            <th>Annotation Revision ID</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in snapshot_items %}
+            <tr>
+              <td>{{ row.image.id }}</td>
+              <td><code class="mono-wrap">{{ row.image.source_path }}</code></td>
+              <td>{{ row.item.annotation_revision_id }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="section-head">
+        <div>
+          <h2>Derived Artifacts</h2>
+          <p class="muted">Open the artifact file directly when you need to inspect machine-readable outputs.</p>
+        </div>
+      </div>
+      {% if artifacts %}
+        <table class="artifact-table">
+          <thead>
+            <tr>
+              <th>Kind</th>
+              <th>Relative Path</th>
+              <th>Metadata</th>
+              <th>Open</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for artifact in artifacts %}
+              <tr>
+                <td><code>{{ artifact.artifact_kind }}</code></td>
+                <td><code class="mono-wrap">{{ artifact.relative_path }}</code></td>
+                <td><pre class="json-block">{{ artifact.metadata_json or "{}" }}</pre></td>
+                <td><a class="button-link secondary" href="{{ url_for('v2.artifact_file', relative_path=artifact.relative_path|replace('\\', '/')) }}">Open</a></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="muted">No derived artifacts have been built yet.</p>
+      {% endif %}
+    </div>
+  </section>
+{% endblock %}

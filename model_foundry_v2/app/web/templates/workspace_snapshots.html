@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Registered Snapshots - {{ workspace.name }}{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h1>Registered Snapshots</h1>
+        <p class="muted">Registered snapshots are immutable dataset identities. Builders, training, and analysis should operate from these snapshot records rather than mutable drafts.</p>
+      </div>
+    </div>
+    {% if snapshot_rows %}
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Source Draft</th>
+            <th>Schema Version</th>
+            <th>Images</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in snapshot_rows %}
+            <tr>
+              <td>{{ row.snapshot.id }}</td>
+              <td><a href="{{ url_for('v2.snapshot_detail', snapshot_id=row.snapshot.id) }}">{{ row.snapshot.name }}</a></td>
+              <td><a href="{{ url_for('v2.dataset_detail', dataset_id=row.dataset.id) }}">{{ row.dataset.name }}</a></td>
+              <td>{{ row.snapshot.class_schema_version }}</td>
+              <td>{{ row.snapshot.image_count }}</td>
+              <td>{{ row.snapshot.created_at }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="empty-state">No registered snapshots yet.</div>
+    {% endif %}
+  </section>
+{% endblock %}

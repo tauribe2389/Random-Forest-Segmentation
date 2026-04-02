@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Analysis - {{ workspace.name }}{% endblock %}
+
+{% block content %}
+  <section class="grid-2">
+    <div class="card">
+      <div class="section-head">
+        <div>
+          <h1>Training Runs</h1>
+          <p class="muted">Training runs create model artifacts from immutable registered snapshots.</p>
+        </div>
+      </div>
+      {% if training_rows %}
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Model</th>
+              <th>Snapshot</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in training_rows %}
+              <tr>
+                <td><a href="{{ url_for('v2.training_run_detail', training_run_id=row.run.id) }}">{{ row.run.id }}</a></td>
+                <td>{{ row.model.name if row.model else row.run.model_definition_id }}</td>
+                <td><a href="{{ url_for('v2.snapshot_detail', snapshot_id=row.snapshot.id) }}">{{ row.snapshot.name }}</a></td>
+                <td><span class="status-pill {{ row.run.status|lower }}">{{ row.run.status }}</span></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="empty-state">No training runs yet.</div>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <div class="section-head">
+        <div>
+          <h1>Prediction Runs</h1>
+          <p class="muted">Prediction runs generate raw and refined artifacts, exports, and promotion candidates.</p>
+        </div>
+      </div>
+      {% if prediction_rows %}
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Model</th>
+              <th>Snapshot</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in prediction_rows %}
+              <tr>
+                <td><a href="{{ url_for('v2.prediction_run_detail', prediction_run_id=row.run.id) }}">{{ row.run.id }}</a></td>
+                <td>{{ row.model.name if row.model else row.run.model_definition_id }}</td>
+                <td><a href="{{ url_for('v2.snapshot_detail', snapshot_id=row.snapshot.id) }}">{{ row.snapshot.name }}</a></td>
+                <td><span class="status-pill {{ row.run.status|lower }}">{{ row.run.status }}</span></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="empty-state">No prediction runs yet.</div>
+      {% endif %}
+    </div>
+  </section>
+{% endblock %}

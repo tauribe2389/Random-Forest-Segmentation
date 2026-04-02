@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Draft Datasets - {{ workspace.name }}{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h1>Draft Datasets</h1>
+        <p class="muted">Draft datasets are the mutable labeling workspaces. Register snapshots from these drafts when you want immutable training or evaluation inputs.</p>
+      </div>
+    </div>
+    {% if datasets %}
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Description</th>
+            <th>Schema Version</th>
+            <th>Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for dataset in datasets %}
+            <tr>
+              <td>{{ dataset.id }}</td>
+              <td><a href="{{ url_for('v2.dataset_detail', dataset_id=dataset.id) }}">{{ dataset.name }}</a></td>
+              <td>{{ dataset.description or "-" }}</td>
+              <td>{{ dataset.schema_version }}</td>
+              <td>{{ dataset.updated_at }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="empty-state">No draft datasets yet.</div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h2>Create Draft Dataset</h2>
+        <p class="muted">Choose source images to create a new mutable labeling set.</p>
+      </div>
+    </div>
+    <form method="post" action="{{ url_for('v2.create_draft_dataset', workspace_id=workspace.id) }}" data-pending-text="Creating dataset...">
+      <label>Name</label>
+      <input type="text" name="name" required>
+      <label>Description</label>
+      <textarea name="description" rows="3"></textarea>
+      <label>Include images</label>
+      {% if images %}
+        <div class="check-list">
+          {% for image in images %}
+            <label class="check-item">
+              <span><input type="checkbox" name="image_ids" value="{{ image.id }}"></span>
+              <span>{{ image.id }} - <code class="mono-wrap">{{ image.source_path }}</code></span>
+            </label>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty-state">Register images before creating a draft dataset.</div>
+      {% endif %}
+      <div class="form-actions">
+        <button type="submit" {% if not images %}disabled{% endif %}>Create draft dataset</button>
+      </div>
+    </form>
+  </section>
+{% endblock %}

@@ -38,6 +38,7 @@
         <button id="selection-tool-single" class="tool-toggle-btn active" type="button" data-tool="single" title="Shortcut: V">Single (V)</button>
         <button id="selection-tool-brush" class="tool-toggle-btn" type="button" data-tool="brush" title="Shortcut: B">Brush (B)</button>
         <button id="selection-tool-marquee" class="tool-toggle-btn" type="button" data-tool="marquee" title="Shortcut: M">Marquee (M)</button>
+        <button id="selection-tool-similarity" class="tool-toggle-btn" type="button" data-tool="similarity" title="Shortcut: S">Similarity (S)</button>
       </div>
 
       <label id="marquee-rule-wrap">
@@ -52,6 +53,77 @@
         <span id="selection-count" class="selection-count-pill">0 selected</span>
         <button id="apply-selection-btn" type="button">Apply Selection</button>
         <button id="clear-selection-btn" type="button" class="secondary">Clear</button>
+      </div>
+
+      <div id="simselect-panel" class="simselect-panel" hidden>
+        <div class="labeler-tool-toggle simselect-input-toggle" role="group" aria-label="Similarity Input Mode">
+          <button id="simselect-input-brush" class="tool-toggle-btn active" type="button">ROI Brush (B)</button>
+          <button id="simselect-input-seed" class="tool-toggle-btn" type="button">Seed Pick</button>
+        </div>
+
+        <div class="simselect-row">
+          <button id="simselect-roi-paint" class="tool-toggle-btn active" type="button">Paint ROI</button>
+          <button id="simselect-roi-erase" class="tool-toggle-btn" type="button">Erase ROI</button>
+        </div>
+
+        <label>
+          ROI Brush Size
+          <input id="simselect-brush-size" type="range" min="2" max="128" step="1" value="24">
+          <span id="simselect-brush-size-value">24 px</span>
+        </label>
+
+        <div class="simselect-meta-row">
+          <span id="simselect-roi-count" class="selection-count-pill">ROI pixels: 0</span>
+          <span id="simselect-match-count" class="selection-count-pill">Matches: 0</span>
+        </div>
+        <p id="simselect-seed-label" class="muted">Seed superpixel: none</p>
+
+        <label class="checkbox">
+          <input id="simselect-color-enabled" type="checkbox" checked>
+          Enable color similarity (Lab)
+        </label>
+        <label>
+          Color Threshold
+          <input id="simselect-color-threshold" type="range" min="0" max="120" step="0.5" value="18">
+          <span id="simselect-color-threshold-value">18.0</span>
+        </label>
+
+        <label class="checkbox">
+          <input id="simselect-texture-enabled" type="checkbox" checked>
+          Enable texture similarity (LBP)
+        </label>
+        <label>
+          Texture Threshold
+          <input id="simselect-texture-threshold" type="range" min="0" max="5" step="0.01" value="0.35">
+          <span id="simselect-texture-threshold-value">0.35</span>
+        </label>
+
+        <div class="simselect-lbp-grid">
+          <label>
+            LBP Points
+            <input id="simselect-lbp-points" type="number" min="4" max="64" step="1" value="8">
+          </label>
+          <label>
+            LBP Radius
+            <input id="simselect-lbp-radius" type="number" min="1" max="16" step="1" value="1">
+          </label>
+          <label>
+            LBP Method
+            <select id="simselect-lbp-method">
+              <option value="uniform" selected>Uniform</option>
+              <option value="ror">ROR</option>
+              <option value="default">Default</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="simselect-action-grid">
+          <button id="simselect-prepare-btn" type="button" class="secondary">Prepare Features</button>
+          <button id="simselect-add-btn" type="button">Add to selection</button>
+          <button id="simselect-subtract-btn" type="button" class="secondary">Subtract from selection</button>
+          <button id="simselect-reset-btn" type="button" class="secondary">Reset matches</button>
+          <button id="simselect-clear-roi-btn" type="button" class="secondary">Clear ROI</button>
+        </div>
       </div>
     </section>
 
@@ -287,6 +359,9 @@
         <img id="boundary-image" class="overlay" src="{{ boundary_url }}" alt="" draggable="false">
         <img id="mask-image" class="overlay" src="data:image/png;base64,{{ initial_mask_base64 }}" alt="" draggable="false">
         <img id="selection-image" class="overlay selection-overlay" src="" alt="" draggable="false">
+        <canvas id="simselect-roi-canvas" class="overlay simselect-roi-overlay" aria-hidden="true"></canvas>
+        <img id="simselect-preview-image" class="overlay simselect-preview-overlay" src="" alt="" draggable="false">
+        <img id="simselect-seed-image" class="overlay simselect-seed-overlay" src="" alt="" draggable="false">
       </div>
       <div id="marquee-rect" class="marquee-rect" hidden></div>
     </div>
@@ -340,7 +415,8 @@
     nextImageUrl: {{ next_image_url|tojson }},
     slicDefault: {{ slic_default|tojson }},
     slicCurrent: {{ slic_current|tojson }},
-    slicDetailPresets: {{ slic_detail_presets|tojson }}
+    slicDetailPresets: {{ slic_detail_presets|tojson }},
+    simselectDefaults: {{ simselect_defaults|tojson }}
   };
 </script>
 <script src="{{ url_for('static', filename='labeler.js') }}"></script>

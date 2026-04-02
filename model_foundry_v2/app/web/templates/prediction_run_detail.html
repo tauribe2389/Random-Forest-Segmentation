@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Prediction Run {{ prediction_run.id }} - {{ app_name }}{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h1>Prediction Run {{ prediction_run.id }}</h1>
+        <p class="muted">Prediction outputs, exports, and promotions are explicit artifacts. They do not become truth unless you promote them.</p>
+      </div>
+      <span class="status-pill {{ prediction_run.status|lower }}">{{ prediction_run.status }}</span>
+    </div>
+    <div class="grid-2">
+      <div class="toolbar-note">
+        <strong>Snapshot</strong><br>
+        <a href="{{ url_for('v2.snapshot_detail', snapshot_id=snapshot.id) }}">#{{ snapshot.id }} {{ snapshot.name }}</a>
+      </div>
+      <div class="toolbar-note">
+        <strong>Model Definition</strong><br>
+        <a href="{{ url_for('v2.model_detail', model_definition_id=model_definition.id) }}">{{ model_definition.name }}</a>
+        (<code>{{ model_definition.family_id }}</code>)
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="toolbar-note">
+        <strong>Created</strong><br>
+        {{ prediction_run.created_at }}
+      </div>
+      <div class="toolbar-note">
+        <strong>Updated</strong><br>
+        {{ prediction_run.updated_at }}
+      </div>
+    </div>
+  </section>
+
+  <section class="grid-2">
+    <div class="card">
+      <div class="section-head">
+        <div>
+          <h2>Export Prediction Artifacts</h2>
+          <p class="muted">Exported outputs are machine-readable downstream artifacts, not annotations.</p>
+        </div>
+      </div>
+      <form method="post" action="{{ url_for('v2.export_prediction_run', prediction_run_id=prediction_run.id) }}" data-pending-text="Exporting masks...">
+        <label>Source artifact type</label>
+        <select name="source_type">
+          <option value="refined" {% if selected_export_source_type == "refined" %}selected{% endif %}>refined</option>
+          <option value="raw" {% if selected_export_source_type == "raw" %}selected{% endif %}>raw</option>
+        </select>
+        <div class="form-actions">
+          <button type="submit">Export class-index masks</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="section-head">
+        <div>
+          <h2>Promote Prediction To New Draft</h2>
+          <p class="muted">Promotion creates new annotation revisions in a new draft dataset. It does not overwrite the source snapshot.</p>
+        </div>
+      </div>
+      <div class="inline-actions">
+        <form class="inline" method="post" action="{{ promote_refined_url }}" data-pending-text="Promoting refined prediction...">
+          <button type="submit">Promote refined prediction</button>
+        </form>
+        <form class="inline" method="post" action="{{ promote_raw_url }}" data-pending-text="Promoting raw prediction...">
+          <button type="submit" class="secondary">Promote raw prediction</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h2>Run Artifacts</h2>
+        <p class="muted">Artifacts are grouped by role so exported masks stay distinct from raw and refined internal arrays.</p>
+      </div>
+    </div>
+    {% if artifacts %}
+      <table class="artifact-table">
+        <thead>
+          <tr>
+            <th>Kind</th>
+            <th>Relative Path</th>
+            <th>Metadata</th>
+            <th>Open</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for artifact in artifacts %}
+            <tr>
+              <td><code>{{ artifact.artifact_kind }}</code></td>
+              <td><code class="mono-wrap">{{ artifact.relative_path }}</code></td>
+              <td><pre class="json-block">{{ artifact.metadata_json or "{}" }}</pre></td>
+              <td><a class="button-link secondary" href="{{ url_for('v2.artifact_file', relative_path=artifact.relative_path|replace('\\', '/')) }}">Open</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No artifacts recorded for this run yet.</p>
+    {% endif %}
+  </section>
+{% endblock %}

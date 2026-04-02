@@ -2711,10 +2711,15 @@ pre {
   display: grid;
   gap: 10px;
   min-width: 0;
+  overflow-x: hidden;
 }
 
 .labeler-tools-card button {
   margin-right: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .labeler-tools-card p {
@@ -2768,13 +2773,28 @@ pre {
 
 .labeler-tool-toggle {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
+  min-width: 0;
+}
+
+.simselect-input-toggle {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.labeler-tool-toggle > * {
+  min-width: 0;
 }
 
 .tool-toggle-btn {
   margin: 0;
   background: #475569;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: center;
+  line-height: 1.2;
+  min-height: 36px;
 }
 
 .tool-toggle-btn.active {
@@ -2857,11 +2877,22 @@ pre {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
+  min-width: 0;
 }
 
 .mode-toggle-btn {
   margin: 0;
   background: #475569;
+}
+
+.labeler-mode-toggle button,
+.labeler-tool-toggle button,
+.simselect-row button,
+.simselect-action-grid button,
+.labeler-selection-row button,
+.labeler-action-grid button {
+  width: 100%;
+  min-width: 0;
 }
 
 .mode-toggle-btn.active {
@@ -2883,10 +2914,49 @@ pre {
   grid-template-columns: 1fr 1fr;
   gap: 6px;
   align-items: center;
+  min-width: 0;
 }
 
 .labeler-selection-row .selection-count-pill {
   grid-column: span 2;
+}
+
+.simselect-panel {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid #d7e2f0;
+  padding-top: 8px;
+  min-width: 0;
+}
+
+.simselect-panel[hidden] {
+  display: none !important;
+}
+
+.simselect-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.simselect-meta-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.simselect-lbp-grid {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.simselect-action-grid {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
 }
 
 .selection-count-pill {
@@ -2905,6 +2975,7 @@ pre {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .dirty-indicator {
@@ -2913,6 +2984,7 @@ pre {
   font-size: 12px;
   font-weight: 600;
   border: 1px solid;
+  flex: 0 0 auto;
 }
 
 .dirty-indicator.clean {
@@ -2930,8 +3002,13 @@ pre {
 .labeler-status {
   margin: 0;
   min-height: 18px;
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 160px;
   color: #111827;
   font-size: 12px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .labeler-status.error {
@@ -3012,6 +3089,14 @@ pre {
 
 .labeler-canvas-viewport.tool-marquee {
   cursor: crosshair;
+}
+
+.labeler-canvas-viewport.tool-similarity {
+  cursor: crosshair;
+}
+
+.labeler-canvas-viewport.tool-similarity.simselect-seed {
+  cursor: cell;
 }
 
 .labeler-canvas-viewport.is-panning {
@@ -3129,6 +3214,18 @@ pre {
 }
 
 .selection-overlay {
+  opacity: 1;
+}
+
+.simselect-roi-overlay {
+  opacity: 0.55;
+}
+
+.simselect-preview-overlay {
+  opacity: 1;
+}
+
+.simselect-seed-overlay {
   opacity: 1;
 }
 
@@ -3308,6 +3405,27 @@ pre {
   color: #0f355f;
 }
 
+.workspace-continue-card {
+  border: 1px solid #bdd3f0;
+  background: linear-gradient(180deg, #f7fbff, #ffffff);
+  padding: 18px;
+}
+
+.workspace-continue-card h2 {
+  margin-top: 4px;
+  margin-bottom: 6px;
+}
+
+.workspace-continue-meta {
+  margin-top: 0;
+  margin-bottom: 12px;
+  color: #475569;
+}
+
+.workspace-row.is-selected td {
+  background: #f3f8ff;
+}
+
 .primary-action-card {
   border: 1px solid #bdd3f0;
   background: linear-gradient(180deg, #f3f8ff, #ffffff);
@@ -3402,6 +3520,10 @@ pre {
   .labeler-canvas-head {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .labeler-tool-toggle {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

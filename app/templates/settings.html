@@ -13,8 +13,8 @@
       <tr><th>COCO Export</th><td><code>{{ workspace.coco_dir }}</code></td></tr>
       <tr><th>Cache</th><td><code>{{ workspace.cache_dir }}</code></td></tr>
       <tr><th>Augmentation Seed</th><td>{{ effective_augmentation_seed }}</td></tr>
-      <tr><th>Created</th><td>{{ workspace.created_at }}</td></tr>
-      <tr><th>Updated</th><td>{{ workspace.updated_at }}</td></tr>
+      <tr><th>Created</th><td><time datetime="{{ workspace.created_at }}" title="{{ workspace.created_at }}">{{ workspace.created_at|human_datetime }}</time></td></tr>
+      <tr><th>Updated</th><td><time datetime="{{ workspace.updated_at }}" title="{{ workspace.updated_at }}">{{ workspace.updated_at|human_datetime }}</time></td></tr>
     </tbody>
   </table>
 </section>
